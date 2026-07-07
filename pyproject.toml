@@ -51,6 +51,9 @@ include = ["modbus_sentinel*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Suite-wide no-hang bound (pytest-timeout): no test, present or future, runs
+# unbounded. Gate 1 criterion 3 tests carry tighter 5s marks on top of this.
+timeout = 30
 
 [tool.coverage.run]
 omit = ["tests/*", "modbus_sentinel/cli.py"]

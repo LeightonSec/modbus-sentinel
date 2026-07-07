@@ -35,9 +35,31 @@ the per-transaction record the whole tool is built on. Pipelining is common
 corrupts every baseline downstream. Full TCP stream reassembly is deferred, but the
 drop must be *visible* — a counted limitation is honest, a silent one is a bug.
 
+**Header-failure recovery = skip-7 (round 5, revised before the parser's first
+commit):** the originally drafted policy — on a bad protocol id or impossible
+length field, discard the buffered remainder from the offending header onward —
+was **falsified by the corpus chunking-determinism test on the parser's first
+ever run**: the amount discarded depended on how many bytes happened to be
+buffered at decision time, i.e. on TCP segmentation, so the same stream bytes
+could produce different reports depending on capture chunking. That violates the
+Gate 1 determinism criterion. Replaced: a header-level failure consumes **exactly
+the 7 untrusted header bytes** as one counted anomaly and framing resumes at the
+next byte. Properties: output is independent of segmentation (the decision uses
+only the first 7 buffered bytes and always costs exactly 7; enforced in CI by the
+chunking-determinism test); progress stays linear (≥7 bytes per anomaly, so a
+pure-garbage segment yields at most n/7 records — the same order as legitimate
+traffic's n/8); and adversarial suppression shrinks from "rest of the chunk" to a
+best-effort misalignment cascade in which every skipped byte is counted, never
+silent. Recovery remains best-effort: a skip can land mid-frame and cascade into
+further counted skips until framing realigns; per-kind anomaly counts in the
+report make that visible.
+
 **Rejected:** parse-requests-only (loses response/exception signal); full TCP
 reassembly in v0.1 (scope creep for a rare case in typical captures, provided the
-rare case is counted when it occurs).
+rare case is counted when it occurs); discard-remainder on header failure
+(segmentation-dependent output — proven, not argued, by the corpus test);
+byte-granular resync with coalesced garbage-run records (more state and subtler
+determinism argument; revisit only if real captures show noisy skip cascades).
 
 **Revisit:** if `truncated_stream` counts are material on real captures, promote
 reassembly to v0.2.
@@ -81,7 +103,9 @@ and make red runs undebuggable.
 free-running fuzz in CI (flaky, slow, unreproducible).
 
 **Revisit:** corpus grows whenever local fuzzing or real captures find a new
-crasher or mis-parse.
+crasher or mis-parse. Growth log: 16 → 18 in round 5 — skip-cascade realignment
+and misalignment fixtures added after the chunking-determinism test falsified
+the original header-failure policy (see D2).
 
 ## D5 — Polling interval: per poll group, median + MAD
 
