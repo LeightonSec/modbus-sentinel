@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Run tests with coverage
+        run: pytest --tb=short -q --cov=modbus_sentinel --cov-report=term-missing --cov-report=xml
+
+      - name: Run bandit
+        run: bandit -r modbus_sentinel/ -ll -q
+
+      - name: Run ruff
+        run: ruff check modbus_sentinel/ tests/
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pip-audit runs as an isolated tool, NOT a project dependency. It is
+      # deliberately kept out of requirements-dev.txt: an audit tool must not
+      # pollute the dependency graph it audits. (pip-audit's own transitive
+      # stack once shipped a vulnerable msgpack into a sibling repo — never
+      # again.) Dev deps are in scope because dev-only CVEs are still CVEs.
+      - name: Audit dependencies (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt -r requirements-dev.txt --strict
+
+      # security-gate is pinned to a known-good commit, not a tag or @main.
+      # Rationale: the gate is fast-moving; a SHA pin is reproducible and is
+      # bumped deliberately. (The v0.1.0 tag predates the gate's hardening and
+      # would propagate an old, toothless build forward — pin the SHA instead.)
+      - name: Install security-gate (pinned)
+        run: pip install "git+https://github.com/LeightonSec/security-gate.git@c52a8b56b3e164f9854c646bedb5d9e70446d98e"
+
+      - name: Run security-gate
+        # Real teeth: blocks on CRITICAL/HIGH. tests/ is excluded because test
+        # fixtures may carry deliberate malicious patterns.
+        run: security-gate scan . --exclude tests --output json --save
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-gate-report
+          path: security-gate-report.json
