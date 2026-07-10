@@ -241,6 +241,80 @@ blur; dependency surface violation); shared parsing library between the two repo
 **Revisit:** if a third pcap-consuming tool appears, reconsider a shared ingestion
 library.
 
+## D10 — Direction attribution is evidence-based and fails closed (round 6)
+
+**Decision:** which side of a TCP stream is the Modbus client is decided from two
+independent evidence sources, never guessed:
+
+1. **Port rule:** exactly one endpoint's port is 502 → that endpoint is the
+   server.
+2. **Handshake rule:** a SYN (without ACK) is observed → its sender is the
+   client.
+
+If only one rule fires, it decides. If **neither** fires, the stream is counted as
+an `unattributed_stream` anomaly (with packet/byte counts) and not parsed. If
+**both fire and disagree** — only possible when a host initiates a connection
+*from* source port 502 — the stream is counted as a `direction_conflict` anomaly
+and not parsed. Disagreeing evidence is itself signal (broken NAT, or a capture
+crafted to probe the tiebreak); silently letting rule ordering win would be a
+guessed direction, and a guessed direction is a silent lie in every downstream
+record. (Conflict flagging added in review round 6 — the original draft let the
+port rule win by ordering, unflagged.)
+
+**Rejected:** content-based direction sniffing (parse both ways, pick the cleaner
+side) — the pcap is hostile input; the adversary authored the bytes and therefore
+gets a vote in any content-based decision. A counted refusal is honest.
+
+**Revisit:** if real captures show material `unattributed_stream` counts on
+nonstandard ports without handshakes, consider an explicit `--server` operator
+override (operator assertion, not inference).
+
+## D11 — Pairing semantics, exception matching, and stream lifecycle (round 6)
+
+**Decision:** request/response pairing within one TCP stream incarnation:
+
+- **Pairing key:** `(transaction_id, unit_id)`. Unit ID is in the key so serial
+  gateways multiplexing several units over one connection pair correctly.
+- **FC match condition — on the parser-normalized FC:** a response pairs when its
+  `ParsedADU.function_code` equals the request's. The parser (mbap.py) already
+  strips the 0x80 exception bit and sets `is_exception`/`exception_code`, so
+  legitimate exception responses (wire FC = request FC | 0x80) pair on the base
+  FC and become TransactionRecords with `exception=true` — never discarded. This
+  is stated explicitly because the wire-level FCs *differ* for exceptions: an
+  implementation matching raw wire bytes silently drops every exception response.
+  (Caught in review round 6 at the spec layer; the shipped parser's
+  normalization masked it. An exception-response pairing fixture is a required
+  positive control in the Gate 1 test plan.)
+- **FC mismatch after normalization** → counted `pairing_mismatch`; neither side
+  becomes a transaction record.
+- **Response with no outstanding request** → counted `orphan_response`.
+- **Duplicate outstanding key** (new request while same key unanswered) → old
+  request becomes a counted `orphan_request` (detail: `tid_reuse`), new request
+  takes the slot. Deterministic, bounded.
+- **Stream lifecycle:** pairing state is per **connection incarnation**. A new
+  SYN on a live 4-tuple finalizes the previous incarnation first — outstanding
+  requests → counted `orphan_request`s, parser `finish()` flushes any partial
+  frame as `truncated_stream` — then state resets. Stale TIDs never bleed across
+  incarnations. End of capture finalizes all incarnations the same way.
+- **Memory bound:** outstanding-request table capped at 65536 per stream (the
+  TID space); overflow is counted, not obeyed — a pcap built to inflate state
+  gets reported.
+- **Record shape:** TransactionRecord carries request and response timestamps,
+  device key (server IP, unit ID), FC, address/quantity/value, read/write class,
+  exception flag + code. Canonical timestamp for baseline math is the **request**
+  timestamp — D5's poll-group intervals model master behavior, and the request is
+  the master's act.
+
+**Rejected:** wire-FC equality for pairing (drops all exception responses —
+protocol-defined FC|0x80 fails naive equality); pairing on transaction ID alone
+(mispairs multiplexed gateway units); letting stale outstanding requests survive
+connection reuse (nondeterministic bleed discovered four review rounds late is
+exactly the failure mode this file exists to prevent).
+
+**Revisit:** if real captures show masters legitimately reusing TIDs with
+multiple outstanding requests (nonconforming but observed in the field), revisit
+the replace-and-orphan policy.
+
 ---
 
 ## Standing assumption (not a decision — a boundary)

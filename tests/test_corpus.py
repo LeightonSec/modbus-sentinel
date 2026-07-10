@@ -65,6 +65,31 @@ def test_deterministic_across_runs_and_chunking(path: Path) -> None:
 
 
 @pytest.mark.timeout(5)
+def test_exception_bit_on_request_flagged_not_laundered() -> None:
+    """Fixture-specific guard (round 6): the generic corpus assertion only
+    proves "some anomaly"; this pins the KIND and the non-laundering.
+
+    Request-side 0x83 must surface as unknown_function_code. If a refactor
+    hoists mbap.py's 0x80-strip above the is_request gate, 0x83 gets
+    normalized to a well-formed fc-3 ParsedADU instead — zero anomalies,
+    generic corpus test still green, and the crafted request becomes pairable
+    against a genuine fc-3 response. This test is what goes red.
+
+    The parser is constructed inline, NOT via run_parser: the property under
+    test IS the direction gate, so the direction must be load-bearing here,
+    not inherited from a helper whose internals could change.
+    """
+    data = (CORPUS_DIR / "exception_bit_on_request.bin").read_bytes()
+    parser = StreamParser(is_request=True)  # explicit — the gate under test
+    out = parser.feed(data)
+    out.extend(parser.finish())
+    assert not any(isinstance(r, ParsedADU) for r in out), "0x83 request was laundered to an ADU"
+    (anomaly,) = [r for r in out if isinstance(r, ParseAnomaly)]
+    assert anomaly.kind == "unknown_function_code"
+    assert "0x83" in anomaly.detail
+
+
+@pytest.mark.timeout(5)
 def test_response_side_never_crashes() -> None:
     """Crash smoke only: the corpus is request-formatted, so through the
     response parser it mostly exercises the byte-count-mismatch path. Semantic

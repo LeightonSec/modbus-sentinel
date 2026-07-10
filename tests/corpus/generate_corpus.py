@@ -10,7 +10,9 @@ should minimize it and add it here, then check the .bin in.
 
 Growth log (mirror of D4): 16 fixtures at first draft; 18 after round 5, when
 the chunking-determinism test falsified the discard-remainder header policy and
-the skip-cascade pair was added to pin the replacement's behavior.
+the skip-cascade pair was added to pin the replacement's behavior; 19 after
+round 6, when D11's exception-FC review exposed that the request-side
+exception-bit path was correct but unguarded.
 """
 
 from pathlib import Path
@@ -49,6 +51,11 @@ CORPUS: dict[str, bytes] = {
         bytes([0x0F]) + (0).to_bytes(2, "big") + (16).to_bytes(2, "big") + bytes([9]) + b"\x00" * 9
     ),
     "fc6_short_data": frame(bytes([0x06, 0x00])),
+    # Exception bit (0x80) on the REQUEST side: the corpus harness parses
+    # request-direction, where the response-only strip branch must NOT fire —
+    # 0x83 has to surface as unknown_function_code, never be laundered to fc 3
+    # (which could then pair against a genuine fc 3 response). Round 6.
+    "exception_bit_on_request": frame(bytes([0x83, 0x02])),
     "exception_trailing_garbage": frame(bytes([0x83, 0x02, 0x99, 0x99])),
     "garbage_after_valid_adu": frame(FC3_READ_REQ) + mbap(2, 0) + b"\xff" * 5,
     "all_ff": b"\xff" * 64,
