@@ -10,16 +10,16 @@ Fail-closed accounting (D2/D4): every Modbus stream byte ends up in a
 TransactionRecord, a counted IngestAnomaly, or a counter on IngestResult.
 Unattributed and direction-conflict streams are tallied whole (packets/bytes)
 and surfaced as one anomaly each at finalization. TCP sequence gaps flush the
-parser (partial frame → truncated_stream) and are counted as reassembly_gap —
+parser (partial frame → truncated_stream) and are counted as reassembly_gap;
 post-gap bytes are then fed to an empty parser buffer so a gap can never
 silently mispair frame boundaries. Retransmitted bytes are deduplicated by
 sequence number and tallied byte-exactly (retransmitted_bytes), never
-double-fed — full and partial overlaps both land in the counter, so the
+double-fed: full and partial overlaps both land in the counter, so the
 byte-accounting invariant above holds with no silent trim. Overlap handling is
 first-copy-wins by sequence number: overlap *content* is not compared against
 what was already delivered (that would require retaining fed bytes), so a
-capture containing divergent overlapping segments — the classic passive-monitor
-desync evasion — is resolved by arrival order, not endpoint semantics.
+capture containing divergent overlapping segments (the classic passive-monitor
+desync evasion) is resolved by arrival order, not endpoint semantics.
 Declared v0.1 limitation.
 
 Stream lifecycle (D11): pairing and parser state live per connection
@@ -27,12 +27,12 @@ incarnation. A new SYN on a live 4-tuple finalizes the old incarnation
 (outstanding requests → orphan_request, partial frames → truncated_stream)
 before state resets; end of capture finalizes every incarnation the same way.
 A SYN carrying payload (TCP Fast Open, or crafted) has its bytes delivered
-into the NEW incarnation — the correct destination, but stated explicitly:
+into the NEW incarnation, the correct destination, but stated explicitly:
 real Modbus masters essentially never use TFO, so this path is a declared
 boundary, not a tested one.
 
 Scope note: every TCP stream in the capture is attributed and parsed by the
-D10 rules — the input is declared to be a Modbus TCP pcap. Non-Modbus TCP
+D10 rules; the input is declared to be a Modbus TCP pcap. Non-Modbus TCP
 streams that pass attribution produce bounded, counted parse anomalies
 (mbap.py guarantees ≥7 bytes consumed per anomaly), visible in the report
 rather than filtered invisibly.
@@ -62,7 +62,7 @@ _Endpoint = tuple[str, int]
 class TransactionRecord:
     """One paired Modbus transaction (D11 record shape).
 
-    Canonical timestamp for baseline math is request_ts — D5's poll-group
+    Canonical timestamp for baseline math is request_ts; D5's poll-group
     intervals model master behavior, and the request is the master's act.
     """
 
@@ -105,7 +105,7 @@ class IngestResult:
     packets_non_tcp: int = 0
     # Byte-exact dedup accounting: full retransmits tally their whole payload,
     # partial overlaps tally the trimmed prefix. Without the bytes counter a
-    # partial overlap's trimmed prefix lands in NO bucket — a silent violation
+    # partial overlap's trimmed prefix lands in NO bucket, a silent violation
     # of the module docstring's every-byte-lands-somewhere invariant (round 6).
     retransmitted_segments: int = 0
     retransmitted_bytes: int = 0
@@ -264,7 +264,7 @@ class _Incarnation:
         request, request_ts = pending
         # D11: match on parser-normalized FC. mbap.py has already stripped the
         # 0x80 exception bit, so exception responses pair here and become
-        # records with is_exception=True — never discarded.
+        # records with is_exception=True, never discarded.
         if adu.function_code != request.function_code:
             result.anomalies.append(
                 IngestAnomaly(
@@ -362,7 +362,7 @@ def ingest_pcap(path: str) -> IngestResult:
             elif key not in streams:
                 # Mid-capture stream: no handshake evidence exists for this
                 # incarnation (a later SYN would start a new one), so the
-                # port rule alone decides — or the stream is refused (D10).
+                # port rule alone decides, or the stream is refused (D10).
                 streams[key] = _Incarnation(src, dst, syn_from=None)
 
             # Ethernet trailer padding lands in scapy's TCP payload; trust the

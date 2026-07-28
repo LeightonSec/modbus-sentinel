@@ -4,7 +4,7 @@ Run from the repo root to (re)create the checked-in .bin fixtures:
 
     python tests/corpus/generate_corpus.py
 
-Every fixture is built from literal bytes — no randomness — so regeneration is
+Every fixture is built from literal bytes (no randomness), so regeneration is
 reproducible and diffs are reviewable. Local fuzzing that finds a new crasher
 should minimize it and add it here, then check the .bin in.
 
@@ -33,6 +33,10 @@ def frame(pdu: bytes, transaction_id: int = 1, unit_id: int = 1, protocol_id: in
 
 FC3_READ_REQ = bytes([0x03]) + (0x0000).to_bytes(2, "big") + (10).to_bytes(2, "big")
 
+# The literal dict form is load-bearing: tests/test_corpus.py extracts these
+# keys by STATIC ast parse (it never executes this file), so the three-way
+# corpus-coverage check reads them without risking a fixture rewrite. Do not
+# rebuild CORPUS via comprehension or dict-merge without updating that parser.
 CORPUS: dict[str, bytes] = {
     # -- header-level failures: length field cannot be trusted --------------
     "truncated_mbap_header": mbap(1, 6)[:4],
@@ -52,11 +56,16 @@ CORPUS: dict[str, bytes] = {
     ),
     "fc6_short_data": frame(bytes([0x06, 0x00])),
     # Exception bit (0x80) on the REQUEST side: the corpus harness parses
-    # request-direction, where the response-only strip branch must NOT fire —
+    # request-direction, where the response-only strip branch must NOT fire:
     # 0x83 has to surface as unknown_function_code, never be laundered to fc 3
     # (which could then pair against a genuine fc 3 response). Round 6.
     "exception_bit_on_request": frame(bytes([0x83, 0x02])),
-    "exception_trailing_garbage": frame(bytes([0x83, 0x02, 0x99, 0x99])),
+    # Same guard, longer PDU: the extra 0x99 0x99 sit INSIDE the framed length,
+    # so one unknown-FC ADU must consume the whole PDU, not a fixed size.
+    # (Renamed from exception_trailing_garbage: those bytes are intra-frame, not
+    # trailing garbage outside a frame. A true outside-the-frame case is a
+    # Gate 2 corpus gap, logged in GATES.md.)
+    "exception_bit_request_padded": frame(bytes([0x83, 0x02, 0x99, 0x99])),
     "garbage_after_valid_adu": frame(FC3_READ_REQ) + mbap(2, 0) + b"\xff" * 5,
     "all_ff": b"\xff" * 64,
     "single_byte": b"\x00",
@@ -64,7 +73,7 @@ CORPUS: dict[str, bytes] = {
     # valid ADU which must parse. Proves cascade recovery, not just survival.
     "skip_cascade_realigns": b"\xff" * 14 + frame(FC3_READ_REQ),
     # 10 garbage bytes: second skip-7 lands mid-frame, eating into the valid
-    # ADU — the documented best-effort limit. Everything must still be counted.
+    # ADU, the documented best-effort limit. Everything must still be counted.
     "skip_cascade_misaligned": b"\xff" * 10 + frame(FC3_READ_REQ),
     # -- positive control: three valid pipelined ADUs, zero anomalies -------
     "pipelined_valid_3": b"".join(frame(FC3_READ_REQ, transaction_id=t) for t in (1, 2, 3)),

@@ -3,7 +3,7 @@
 Fixtures are synthetic pcaps built with scapy (D9: technique reused from
 pcap-analyser's generate_test_pcaps.py pattern). Every locked D10/D11 behavior
 gets a test, including the exception-response pairing positive control that
-D11 requires — the wire FC differs from the request FC there, and a naive
+D11 requires: the wire FC differs from the request FC there, and a naive
 wire-byte equality check silently drops it.
 """
 
@@ -150,7 +150,7 @@ def test_exception_bit_on_request_never_pairs(tmp_path: Path) -> None:
     TransactionRecord, even when a genuine fc-3 response arrives with the
     same tid/unit. The parse-layer guard (test_corpus / test_mbap) proves
     0x83 is flagged, not laundered; this proves the consequence at the
-    pairing layer — the crafted request never enters the outstanding table,
+    pairing layer: the crafted request never enters the outstanding table,
     so the real response is an orphan, not a corrupted record.
     """
     c = Conn()
@@ -255,7 +255,7 @@ def test_pure_retransmission_not_double_fed(tmp_path: Path) -> None:
 
 def test_partial_overlap_trim_is_counted(tmp_path: Path) -> None:
     """The trimmed prefix of a partially overlapping segment must land in
-    retransmitted_bytes — before round 6 it landed in NO bucket, silently
+    retransmitted_bytes; before round 6 it landed in NO bucket, silently
     violating the every-byte-lands-somewhere invariant. Distinct from the
     full-overlap path: retransmitted_segments must NOT increment here, the
     segment carried new bytes and was (partially) fed.

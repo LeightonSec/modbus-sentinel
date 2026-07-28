@@ -52,8 +52,15 @@ htmlcov/
 # Node
 node_modules/
 
-# Reports (generated output — not source)
+# Reports (generated output, not source)
 *-report.json
 *-report.md
 scan-*.json
 scan-*.md
+
+# No captured traffic: the corpus is synthetic (GATES.md). Block accidental
+# commits of real captures; verify_prose.py also FAILS if any is tracked. Tests
+# write throwaway pcaps to pytest tmp dirs, outside the repo, so this is safe.
+*.pcap
+*.pcapng
+*.cap

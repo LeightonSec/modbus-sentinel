@@ -3,7 +3,7 @@
 Fail-closed by construction (D2/D4): every input byte is either consumed into a
 ParsedADU, consumed into a ParseAnomaly, or left as a bounded partial buffer
 that finish() converts to a truncated_stream anomaly. Nothing is silently
-skipped and no input can make the loop stop progressing — each iteration
+skipped and no input can make the loop stop progressing; each iteration
 either consumes at least one full frame or terminates.
 
 Framing recovery policy: when the MBAP header itself is untrustworthy (wrong
@@ -13,7 +13,7 @@ resumes at the next byte. Fixed-size consumption keeps output independent of
 how the TCP stream was segmented into feed() calls (enforced by the corpus
 chunking-determinism test, which falsified the earlier discard-the-remainder
 policy) and keeps progress linear. Recovery is best-effort: a skip can land
-mid-frame and cascade into further counted skips until framing realigns — every
+mid-frame and cascade into further counted skips until framing realigns; every
 skipped byte is counted, never silent. A malformed PDU inside a *well-framed*
 ADU costs only that ADU.
 """
@@ -56,7 +56,7 @@ class ParsedADU:
 
 @dataclass(frozen=True)
 class ParseAnomaly:
-    """Malformed input, counted and reported — never silently dropped."""
+    """Malformed input, counted and reported, never silently dropped."""
 
     kind: str  # bad_protocol_id | bad_length | unknown_function_code |
     #            malformed_pdu | truncated_stream
@@ -98,7 +98,7 @@ class StreamParser:
 
             frame_len = 6 + length
             if len(self._buf) < frame_len:
-                return out  # partial frame — wait for more bytes or finish()
+                return out  # partial frame; wait for more bytes or finish()
 
             pdu = self._buf[MBAP_HEADER_LEN:frame_len]
             out.append(self._parse_pdu(transaction_id, unit_id, pdu))
@@ -124,7 +124,7 @@ class StreamParser:
         """Consume exactly the 7 untrusted header bytes; framing resumes after.
 
         Fixed-size consumption is what makes output independent of feed()
-        chunking — the decision uses only the first 7 buffered bytes and always
+        chunking: the decision uses only the first 7 buffered bytes and always
         costs exactly 7, so segmentation cannot change the result.
         """
         anomaly = ParseAnomaly(

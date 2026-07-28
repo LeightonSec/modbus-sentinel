@@ -1,6 +1,6 @@
 """modbus-sentinel CLI.
 
-argparse only — the dependency surface is locked at scapy + stdlib (DECISIONS.md
+argparse only; the dependency surface is locked at scapy + stdlib (DECISIONS.md
 D3), and a plain-print CLI keeps Gate 4's terminal-sanitization story simple:
 nothing emits ANSI except us, so anything escape-like in output came from a
 packet and must already be hex-escaped.
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
     print(_ETHICAL_WARNING, file=sys.stderr)
-    # Gate 1 (ingestion) in progress — see DESIGN.md gate structure.
+    # Gate 1 (ingestion) in progress; see DESIGN.md gate structure.
     print("modbus-sentinel: analysis pipeline not yet implemented (Gate 1 in progress).")
     return 1
 

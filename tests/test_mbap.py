@@ -44,7 +44,7 @@ def test_read_response(fc: int) -> None:
     assert adu.function_code == fc
     assert not adu.is_request
     assert adu.byte_count == 2
-    assert adu.start_address is None  # responses carry no address — pairing recovers it
+    assert adu.start_address is None  # responses carry no address; pairing recovers it
 
 
 @pytest.mark.parametrize("fc,value", [(5, 0xFF00), (6, 0x1234)])
@@ -149,7 +149,7 @@ def test_skip_cascade_realigns_on_7_multiple() -> None:
 @pytest.mark.timeout(5)
 def test_skip_cascade_misaligned_loses_frame_but_counts_every_byte() -> None:
     """10 garbage bytes: skip-7 lands mid-frame and the valid ADU is consumed
-    into the cascade — the documented best-effort limit. No ADU is recovered,
+    into the cascade, the documented best-effort limit. No ADU is recovered,
     but every input byte is accounted for in anomaly records."""
     valid = frame(bytes([3]) + (0).to_bytes(2, "big") + (1).to_bytes(2, "big"))
     data = b"\xff" * 10 + valid
