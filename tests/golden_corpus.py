@@ -3,8 +3,8 @@
 Ordered parser-output signature per corpus fixture:
     ("anom", kind, stream_byte_offset) | ("adu", function_code, transaction_id)
 
-Regenerate:  python scripts/emit_golden.py
-Check:       python scripts/emit_golden.py --check   (run by `make check` and CI)
+Regenerate:  python -m scripts.emit_golden
+Check:       python -m scripts.emit_golden --check   (run by `make check` and CI)
 """
 
 GOLDEN: dict[str, tuple[tuple, ...]] = {

@@ -26,6 +26,6 @@ pin-dev:
 # it did not earn. Order: prose gate, golden freshness, lint, tests.
 check:
 	$(PY) scripts/verify_prose.py
-	$(PY) scripts/emit_golden.py --check
+	$(PY) -m scripts.emit_golden --check
 	$(PY) -m ruff check modbus_sentinel/ tests/
 	$(PY) -m pytest -q
