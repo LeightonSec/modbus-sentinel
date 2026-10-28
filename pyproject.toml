@@ -64,7 +64,7 @@ timeout = 30
 addopts = "--tb=short -q --cov=modbus_sentinel --cov-report=term-missing --cov-report=xml --cov-fail-under=97.9"
 
 [tool.coverage.run]
-omit = ["tests/*", "modbus_sentinel/cli.py"]
+omit = ["tests/*"]
 
 [tool.ruff]
 line-length = 100

@@ -8,15 +8,14 @@ records cover the exact address and class rules.
 """
 
 import random
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from family_builder import T0, UNTIL, Event, family_events
 from pcap_builder import (
     SERVER,
     Conn,
     exc_resp,
-    frame,
     read_req,
     read_resp,
     write_multi_req,
@@ -35,39 +34,7 @@ from modbus_sentinel.detect import (
 )
 from modbus_sentinel.ingest import IngestResult, ingest_pcap
 
-T0 = 1783324800.0  # 2026-07-06T08:00:00Z
-UNTIL = T0 + 120  # baseline period: T0 to T0 + 120 s
-END = T0 + 240  # detection period: T0 + 120 s to T0 + 240 s
 OTHER_IP = "192.168.1.21"
-
-Builder = Callable[[int], bytes]
-Event = tuple[float, Builder, Builder | None]
-
-
-def fc05(tid: int, unit: int, addr: int) -> bytes:
-    return frame(tid, unit, b"\x05" + addr.to_bytes(2, "big") + b"\xff\x00")
-
-
-def _every(period: float, offset: float, req: Builder, resp: Builder) -> list[Event]:
-    out = []
-    i = 0
-    while T0 + offset + i * period < END:
-        out.append((T0 + offset + i * period, req, resp))
-        i += 1
-    return out
-
-
-def family_events() -> list[Event]:
-    """Device A (unit 1) and device B (unit 2) on one IP, same pattern in both
-    periods. Fractional offsets keep every request at least 0.1 s apart."""
-    ev: list[Event] = []
-    ev += _every(2, 0.0, lambda t: read_req(t, 1, 3, 100, 10), lambda t: read_resp(t, 1, 3, 10))
-    ev += _every(5, 0.5, lambda t: read_req(t, 1, 3, 200, 2), lambda t: read_resp(t, 1, 3, 2))
-    ev += _every(10, 0.7, lambda t: read_req(t, 1, 4, 50, 1), lambda t: read_resp(t, 1, 4, 1))
-    ev += _every(30, 0.9, lambda t: write_single_req(t, 1, 40, 7), lambda t: write_single_req(t, 1, 40, 7))
-    ev += _every(3, 0.2, lambda t: read_req(t, 2, 1, 0, 16), lambda t: read_resp(t, 2, 1, 1))
-    ev += _every(30, 0.4, lambda t: fc05(t, 2, 3), lambda t: fc05(t, 2, 3))
-    return ev
 
 
 def family_pcap(tmp_path: Path, inject: list[Event] | None = None) -> IngestResult:
