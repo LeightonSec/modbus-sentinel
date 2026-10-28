@@ -1,0 +1,36 @@
+modbus-sentinel baseline (Gate 2)
+  baseline period: transactions requested before 2026-07-06T08:01:00Z
+  clock: capture clock, UTC. Addresses are 0-based wire addresses.
+  assumption: the baseline period is clean; anything in it is learned as normal.
+  67 transactions, 2 devices
+
+device 192.168.1.20 unit 1
+  transactions: 45, of which 1 exception response (kept out of the address sets)
+  seen: 2026-07-06T08:00:00Z to 2026-07-06T08:00:59Z (59 s)
+  function codes: 03 read holding registers, 06 write single register
+  address sets:
+    coils              read: none                   written: none
+    discrete inputs    read: none
+    holding registers  read: 100-109, 200-201       written: 40
+    input registers    read: none
+  poll groups (class 3 not implemented; band width N not decided):
+    FC 03 addr 100 qty 10  30 requests  median 2.000 s  MAD 0.000 s  armable
+    FC 03 addr 200 qty 2   11 requests  median 5.000 s  MAD 0.000 s  armable
+    FC 03 addr 500 qty 1   1 request    insufficient baseline data (n=1), interval not monitored
+    FC 06 addr 40 qty 1    3 requests   insufficient baseline data (n=3), interval not monitored
+  operational window (class 4 not implemented): not armable, baseline spans 59 s; D8 needs 72 h
+
+device 192.168.1.20 unit 2
+  transactions: 22, no exception responses
+  seen: 2026-07-06T08:00:02Z to 2026-07-06T08:00:57Z (55 s)
+  function codes: 01 read coils, 04 read input registers, 05 write single coil
+  address sets:
+    coils              read: 0-15                   written: 3
+    discrete inputs    read: none
+    holding registers  read: none                   written: none
+    input registers    read: 0-3
+  poll groups (class 3 not implemented; band width N not decided):
+    FC 01 addr 0 qty 16    9 requests   insufficient baseline data (n=9), interval not monitored
+    FC 04 addr 0 qty 4     12 requests  median 5.000 s  MAD 0.000 s  armable
+    FC 05 addr 3 qty 1     1 request    insufficient baseline data (n=1), interval not monitored
+  operational window (class 4 not implemented): not armable, baseline spans 55 s; D8 needs 72 h
