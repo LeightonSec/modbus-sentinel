@@ -15,37 +15,42 @@ tracked forward, not retroactive reopenings.
 | Gate | Scope | Pass criteria (see DESIGN.md) | Status | Commit |
 |---|---|---|---|---|
 | 1. Ingestion | pcap to per-transaction records; direction attribution (D10), pairing (D11), malformed-input corpus (D4) | known-good pcaps parse; pipelined/split-ADU handled; malformed corpus is deterministic, fails closed, never crashes | Complete | `7ebc595` |
-| 2. Baseline construction | per-device baseline from a user-designated normal period (D6) | baseline object serializable, inspectable, readable by a human without reading code | In progress | - |
-| 3. Anomaly detection | the five heuristics (D7/D8) over the post-baseline period | injected anomaly flagged; clean pcap yields zero false positives; both in CI | In progress | - |
-| 4. Reporting | human-readable + `--json`; terminal-escape sanitization of packet-derived bytes | "what happened" separated from "why flagged"; sanitization test present | Planned | - |
-| 5. CI and tests | pinned lockfile; CI on every push; prose + golden gates; coverage floor | `make check` green (prose gate, golden freshness, ruff, tests at the 97.9% coverage floor) on every push | In progress | - |
+| 2. Baseline construction | per-device baseline from a user-designated normal period (D6) | baseline object serializable, inspectable, readable by a human without reading code | Complete | `cd1672b` |
+| 3. Anomaly detection | the five heuristics (D7/D8) over the post-baseline period | injected anomaly flagged; clean pcap yields zero false positives; both in CI | First cut met (classes 1, 2, 5); classes 3 and 4 pending | `f81c3bd` |
+| 4. Reporting | human-readable + `--json`; terminal-escape sanitization of packet-derived bytes | "what happened" separated from "why flagged"; sanitization test present | Minimum met; not built: FC 08/43 device attribution, classes 3 and 4 | `c021463` |
+| 5. CI and tests | pinned lockfile; CI on every push; prose + golden gates; coverage floor | `make check` green (prose gate, golden freshness, ruff, tests at the 97.9% coverage floor) on every push | Met | `c021463` |
 
-Gate 5 note: the prose gate, golden `--check`, ruff, and the coverage floor are
-introduced by the commit that adds this file, so at that commit they are not yet
-proven green in CI. Status stays "In progress" until CI passes on the pushed
-commit; a follow-up then flips it to "Met" with the hash. Status is never ahead
-of the evidence.
+Gate 5 note: CI ran `make check` (prose gate, golden freshness, ruff, tests at
+the 97.9% floor) green on the pushed commits `cd1672b`, `f81c3bd` and
+`c021463`, so the status is "Met" at `c021463`. Status is never ahead of the
+evidence.
 
-Gates 2 and 3 note (2026-10-28): Gate 1 is complete (`7ebc595`). Gates 2 and 3
-are in progress under DECISIONS.md D12; no baseline or detection code exists yet.
-The first cut implements class 1 (unscheduled write), class 2 (write to unknown
-register) and class 5 (never-seen function code, supported FCs only). Class 3
-(polling-interval break) and class 4 (off-hours activity) are deferred until N
-and the arming details are decided. Gate 3 stays "In progress" until all five
-classes are implemented and its pass criteria pass in CI.
+Gates 2 to 4 note (2026-10-28): Gate 2 met its pass criteria at `cd1672b`: the
+baseline round-trips through JSON, and its text render is pinned by
+`tests/golden_baseline.txt`. Gate 3 is a first cut at `f81c3bd`: class 1
+(unscheduled write), class 2 (write to unknown register) and class 5
+(never-seen function code, supported FCs only) run, and both pass criteria are
+tests that ran green in CI. Gate 3 is not Complete: class
+3 (polling-interval break) and class 4 (off-hours activity) wait until N and
+the arming details are decided (D12). The Gate 4 minimum landed at `c021463`:
+text report and `--json`, what happened separate from why flagged, and every
+text line escaped to printable ASCII, with sanitisation tests. Not built yet:
+device attribution for FC 08 and FC 43, and classes 3 and 4.
 
 ## Coverage
 
 `make check` enforces `--cov-fail-under=97.9` via `addopts`, so the floor applies
-to every pytest invocation. Coverage is **287/293 statements = 97.95%** of the
-**parser and ingest layer, not the whole package**: `[tool.coverage.run].omit`
-excludes `modbus_sentinel/cli.py` (a thin argparse shell) and `tests/*`.
+to every pytest invocation. `[tool.coverage.run].omit` excludes only `tests/*`:
+since `c021463`, `modbus_sentinel/cli.py` is measured, with its `__main__` guard
+marked `# pragma: no cover`. A local run on Python 3.12 measured 99.25% total,
+with `cli.py` and `report.py` at 100%. The total CI measures on Python 3.10 to
+3.12 is not recorded here.
 
-The floor is 97.9, not 98, on purpose: the coverage table *displays* 98%
-(rounded), but `--cov-fail-under` compares the unrounded 97.95%, so a floor of 98
-fails at the number it claims. The six uncovered statements are error branches
-(mbap.py:186, 213, 269 and ingest.py:237-248, 373), logged here as review
-material rather than hidden under a rounded floor.
+The floor is 97.9, not 98, on purpose: it was set when coverage was 287/293 =
+97.95% of the parser and ingest layer (Gate 1), which the coverage table
+*displays* as 98% while `--cov-fail-under` compares the unrounded value. The six
+statements uncovered then were error branches (mbap.py:186, 213, 269 and
+ingest.py:237-248, 373); whether they are still uncovered has not been re-read.
 
 ## Gate 1 corpus
 
@@ -79,6 +84,8 @@ in the repo: all packet data is synthetic and built from code.
 
 Tracked here so they cannot drift out of view. Severity and priority are the
 owner's call; this file only records existence.
+
+- Independent security review of the D12 locked-text amendments (DESIGN.md:3-5) is pending.
 
 **Against Gate 1 (scope note, not an untested gap):**
 

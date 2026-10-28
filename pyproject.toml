@@ -57,10 +57,11 @@ timeout = 30
 # Coverage on EVERY pytest invocation (make check, bare pytest, CI), so the
 # measurement cannot be silently dropped by changing how pytest is called. The
 # XML report is for CI consumption; it and .coverage are gitignored.
-# Floor is 97.9, not 98: coverage is 287/293 = 97.95%, which the report table
-# DISPLAYS as 98% (rounded) but --cov-fail-under compares unrounded, so a floor
-# of 98 fails at the number it claims. 97.9 is the truthful floor with ~zero
-# slack. The 6 uncovered statements are error branches, logged in GATES.md.
+# Floor is 97.9: --cov-fail-under compares the unrounded total, and 97.9 was set
+# when Gate 1 measured 287/293 = 97.95% (displayed as 98%). omit excludes only
+# tests/*, so cli.py and report.py count; cli.py's __main__ guard is marked
+# pragma: no cover. A local Python 3.12 run measured 99.25% total. The total CI
+# measures on Python 3.10 to 3.12 is not recorded here. See GATES.md Coverage.
 addopts = "--tb=short -q --cov=modbus_sentinel --cov-report=term-missing --cov-report=xml --cov-fail-under=97.9"
 
 [tool.coverage.run]

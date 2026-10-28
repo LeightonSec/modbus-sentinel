@@ -190,7 +190,10 @@ library.
 
 ## Gate 1 delivery target (2026-07-09, met)
 
-Gate 1 (ingestion) was the Thursday deliverable and was met. Gate 2 (baseline
-construction) is next; live gate status is tracked in [GATES.md](GATES.md).
-Honest sentence if asked: "I'm building a state-based Modbus anomaly detector:
-ingestion's done, baseline modeling is next." Don't reach for more.
+Gate 1 (ingestion) was the Thursday deliverable and was met. Gate 2 (baseline),
+the Gate 3 first cut (classes 1, 2 and 5) and the Gate 4 minimum report have
+since landed; live gate status is tracked in [GATES.md](GATES.md). Honest
+sentence if asked: "I'm building a state-based Modbus anomaly detector: it
+ingests a pcap, learns a per-device baseline and flags three of its five
+anomaly classes; polling-interval and off-hours detection are not built yet."
+Don't reach for more.

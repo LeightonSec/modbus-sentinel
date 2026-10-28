@@ -9,11 +9,11 @@
 > well-formed Modbus transactions, it answers one question: is this device's
 > behavior consistent with its own history?
 
-**Status: Gate 1 (ingestion) complete (commit `7ebc595`); Gate 2 (baseline
-construction) and Gate 3 (anomaly detection) in progress.** Live gate status is
-tracked in [GATES.md](GATES.md). The full spec is in [DESIGN.md](DESIGN.md);
-every locked decision with rationale and rejected alternatives is in
-[DECISIONS.md](DECISIONS.md).
+**Status: Gates 1 (ingestion) and 2 (baseline) complete; Gate 3 (detection)
+runs classes 1, 2 and 5, with classes 3 and 4 not yet implemented; the Gate 4
+minimum report is built.** Live gate status is tracked in [GATES.md](GATES.md).
+The full spec is in [DESIGN.md](DESIGN.md); every locked decision with rationale
+and rejected alternatives is in [DECISIONS.md](DECISIONS.md).
 
 ---
 
@@ -39,39 +39,59 @@ monitoring, not a fuzzer, and speaks Modbus TCP only. There is no ML: detection 
 baseline-and-deviation logic, deterministic and auditable, so "why did this fire"
 is always answerable in plain English.
 
+## Usage
+
+```sh
+modbus-sentinel capture.pcap --baseline-until 2026-07-06T08:00:00Z
+modbus-sentinel capture.pcap --baseline-until 1783324800 --json
+```
+
+Transactions requested before `--baseline-until` form the baseline; everything
+after it is checked against that baseline. `--baseline-until` takes epoch
+seconds or ISO 8601 with an offset. The baseline period is assumed clean:
+anything in it is learned as normal.
+
+Exit codes: `0` no findings, `1` at least one finding, `2` usage or input error
+(a bad `--baseline-until`, an unreadable pcap, or no transactions before
+`--baseline-until`).
+
 ## The five anomaly classes
 
-**Not yet implemented.** Baseline (Gate 2) and detection (Gate 3) are in
-progress; see [GATES.md](GATES.md). The design: per device, identified as
-(server IP, unit ID), never unit ID alone, a baseline period of the capture
-establishes normal, and the detection period is checked for:
+Classes 1, 2 and 5 run today; classes 3 and 4 are not yet implemented, and the
+report names them as such. Per device, identified as (server IP, unit ID), never
+unit ID alone, a baseline period of the capture establishes normal, and the
+detection period is checked for:
 
 1. **Unscheduled write:** write to a register only ever read in baseline
 2. **Write to unknown register:** write to a register the baseline never saw
    (recon-then-strike pattern)
 3. **Polling-interval break:** per poll group, median ± N·MAD band, armed at
-   ≥ 10 baseline observations (deferred until N is decided)
+   ≥ 10 baseline observations (not yet implemented: N not decided)
 4. **Off-hours activity:** traffic outside the device's observed operational
-   window (arming rules in DESIGN.md; deferred)
+   window (arming rules in DESIGN.md; not yet implemented)
 5. **Never-seen function code:** any supported FC absent from the device's
    baseline set. FC 08 and FC 43 are not yet covered (DECISIONS.md D12)
 
 Classes 1 and 2 compare addresses per Modbus table (coils, discrete inputs,
 holding registers, input registers). Each class is a heuristic, not a proof of
-malice. Reports will say **anomalous, not attack**, and will state every skipped
-heuristic with its reason. A silent gap misleads the analyst into believing
-coverage that doesn't exist.
+malice. The report says **anomalous, not attack** and states what it did not
+analyse: classes 3 and 4, devices with no baseline, unanswered requests,
+function codes outside the supported set, unparsed streams, and records
+rejected as malformed. A silent gap misleads the analyst into believing coverage
+that doesn't exist.
 
 ## Trust boundaries: read before trusting the output
 
-- **The baseline period is assumed clean.** You will designate it
-  (`--baseline-until`, a timestamp; not yet wired into analysis); the tool will
-  not guess. An attacker present during the baseline is learned as normal. This
-  is structural to all baseline-and-deviation detection, not a fixable bug.
+- **The baseline period is assumed clean.** You designate it with
+  `--baseline-until`; the tool will not guess. An attacker present during the
+  baseline is learned as normal. This is structural to all
+  baseline-and-deviation detection, not a fixable bug.
 - **The pcap is treated as hostile input.** The adversary being analysed authored
   some of those bytes. Malformed frames become counted parse-anomaly records
-  (never crashes, never silent skips). Escaping packet-derived bytes before they
-  reach your terminal is a Gate 4 requirement and is not built yet.
+  (never crashes, never silent skips). Every line of the text report is escaped
+  to printable ASCII and packet bytes appear only as hex, so nothing
+  packet-derived reaches your terminal raw. A record whose address range runs
+  past 65535 is rejected and listed, and the run continues.
 - **Unanswered writes are not analysed.** A write with no response is counted as
   an orphan request, not passed to detection (DECISIONS.md D12).
 - **Timestamps are capture-clock, not device-clock.**
