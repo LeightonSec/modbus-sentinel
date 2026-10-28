@@ -10,83 +10,21 @@ wire-byte equality check silently drops it.
 from pathlib import Path
 
 import pytest
-from scapy.layers.inet import IP, TCP
+from pcap_builder import (
+    CLIENT,
+    SERVER,
+    Conn,
+    exc_resp,
+    frame,
+    read_req,
+    read_resp,
+    write_single_req,
+)
+from scapy.layers.inet import TCP
 from scapy.layers.l2 import Ether
 from scapy.utils import wrpcap
 
 from modbus_sentinel.ingest import IngestResult, ingest_pcap
-
-CLIENT = "192.168.1.10"
-SERVER = "192.168.1.20"
-CPORT = 49152
-SPORT = 502
-
-
-def mbap(tid: int, unit: int, pdu: bytes) -> bytes:
-    return tid.to_bytes(2, "big") + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + bytes([unit])
-
-
-def frame(tid: int, unit: int, pdu: bytes) -> bytes:
-    return mbap(tid, unit, pdu) + pdu
-
-
-def read_req(tid: int, unit: int = 1, fc: int = 3, addr: int = 100, qty: int = 10) -> bytes:
-    return frame(tid, unit, bytes([fc]) + addr.to_bytes(2, "big") + qty.to_bytes(2, "big"))
-
-
-def read_resp(tid: int, unit: int = 1, fc: int = 3, qty: int = 10) -> bytes:
-    payload = b"\x00\x01" * qty
-    return frame(tid, unit, bytes([fc, len(payload)]) + payload)
-
-
-def exc_resp(tid: int, unit: int = 1, fc: int = 3, code: int = 2) -> bytes:
-    return frame(tid, unit, bytes([fc | 0x80, code]))
-
-
-def write_single_req(tid: int, unit: int = 1, addr: int = 40, value: int = 7) -> bytes:
-    return frame(tid, unit, b"\x06" + addr.to_bytes(2, "big") + value.to_bytes(2, "big"))
-
-
-class Conn:
-    """Builds one TCP connection's packets with consistent seq numbers."""
-
-    def __init__(
-        self,
-        client: tuple[str, int] = (CLIENT, CPORT),
-        server: tuple[str, int] = (SERVER, SPORT),
-        t0: float = 1000.0,
-        handshake: bool = True,
-    ):
-        self.client, self.server = client, server
-        self.t = t0
-        self.seq = {client: 1000, server: 5000}
-        self.pkts: list = []
-        if handshake:
-            self._pkt(client, server, flags="S")
-            self._pkt(server, client, flags="SA")
-            self._pkt(client, server, flags="A")
-
-    def _pkt(self, src, dst, flags="PA", payload=b"", seq=None):
-        self.t += 0.1
-        if seq is None:
-            seq = self.seq[src]
-        p = (
-            Ether()
-            / IP(src=src[0], dst=dst[0])
-            / TCP(sport=src[1], dport=dst[1], flags=flags, seq=seq)
-            / payload
-        )
-        p.time = self.t
-        self.pkts.append(p)
-        if seq == self.seq[src]:
-            self.seq[src] += len(payload) + (1 if "S" in flags else 0)
-        return p
-
-    def send(self, payload: bytes, **kw):
-        return self._pkt(self.client, self.server, payload=payload, **kw)
-
-    def recv(self, payload: bytes, **kw):
-        return self._pkt(self.server, self.client, payload=payload, **kw)
 
 
 def ingest(tmp_path: Path, *conns: Conn) -> IngestResult:
