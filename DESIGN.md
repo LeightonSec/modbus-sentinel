@@ -73,13 +73,16 @@ Each is a heuristic, not a proof of malice. The report says "anomalous," not
    containing **100%** of the device's baseline transactions. Arms only if the
    baseline spans ≥ 72 hours **and** that window covers ≤ 20 of 24 hours;
    otherwise skipped and the skip (with reason) is stated in the report.
-5. **Never-seen function code:** any FC (including diagnostics FC 08 and device
-   identification FC 43) not present in the device's baseline FC set. Read-side
-   recon and DoS-primitive FCs are caught here, not just writes.
+5. **Never-seen function code:** any supported FC (01, 02, 03, 04, 05, 06, 15,
+   16) not present in the device's baseline FC set. FC 08 (diagnostics) and FC 43
+   (device identification) are counted as parse anomalies but not yet attributed
+   to a device, so this class cannot fire on them in v0.1 (D12).
 
-**Write decision tree (classes 1 vs 2):** one write event fires exactly one class:
-register in baseline read-set → class 1; register absent from baseline → class 2.
-Never both. Double-flagging a single packet reads as noise and erodes report trust.
+**Write decision tree (classes 1 vs 2):** one write event produces exactly one
+finding: register in the target table's baseline read-set → class 1; register
+absent from that table's baseline → class 2. Never both. If the write's FC is
+also absent from the baseline FC set, that same finding also carries class 5
+(D12). Double-flagging a single packet reads as noise and erodes report trust.
 
 ## Gate structure
 
@@ -122,10 +125,11 @@ Scope that is the actual work (D2):
 ### Gate 2: Baseline construction
 
 Per-device baseline from a user-designated normal period (`--baseline-until
-<timestamp|packet-count>`, D6). Baseline contents per (server IP, unit ID):
+<timestamp>`, D6, D12). Baseline contents per (server IP, unit ID):
 
 - FC set
-- read-set and write-set of register addresses
+- read-set and write-set of addresses, per Modbus table (coils, discrete inputs,
+  holding registers, input registers; D12)
 - poll groups, keyed (FC, start address, count), each with observation count,
   median inter-arrival, MAD
 - operational window (if armable per class-4 rules)

@@ -324,6 +324,71 @@ exactly the failure mode this file exists to prevent).
 multiple outstanding requests (nonconforming but observed in the field), revisit
 the replace-and-orphan policy.
 
+## D12: Detection first cut: scope, address tables, exceptions, split (2026-10-28)
+
+**Decision:** for the Gate 2 (baseline) and Gate 3 (detection) first cut:
+
+- **Function-code scope:** detection covers the eight supported FCs only (01,
+  02, 03, 04, 05, 06, 15, 16). FC 08, FC 43 and every other FC are still counted
+  as `unknown_function_code` parse anomalies, but that record carries no device
+  key, so class 5 cannot fire on them. Attributing them to a device is its own
+  later commit with its own entry. Until then README and DESIGN.md state class 5
+  for supported FCs only.
+- **Unanswered writes:** a write request with no response becomes a counted
+  `orphan_request` and no TransactionRecord, so no detection class sees it.
+  Declared v0.1 limit. A test pins the current `orphan_request` behaviour so any
+  change to it is visible.
+- **Per-table address sets:** read-set and write-set are kept per Modbus table,
+  never pooled: coils (read FC 01, write FC 05/15), discrete inputs (read FC 02),
+  holding registers (read FC 03, write FC 06/16), input registers (read FC 04).
+  Classes 1 and 2 compare a write only against the sets of the table it targets.
+  A request covers addresses start to start + quantity - 1; FC 05/06 cover one.
+- **Exceptions:** a transaction answered with an exception response does not add
+  to the read-set or the write-set.
+- **Baseline split:** `--baseline-until` takes a timestamp only in v0.1. This
+  supersedes the packet-count option in D6. Accepted forms: epoch seconds, or
+  ISO 8601 with an explicit UTC offset; a timestamp without an offset is
+  rejected.
+- **Class 4 clock:** time of day for the operational window is computed in UTC
+  from the capture timestamps.
+- **Classes 3 and 4 deferred:** not implemented until N (D5) and the arming
+  details are decided in a later entry. The report names them as not
+  implemented, never leaves them silently absent.
+- **One write, several classes:** one transaction produces at most one finding,
+  and that finding lists every class it matched. A write with a never-seen FC to
+  a register only ever read in baseline is one finding carrying classes 5 and 1.
+  Classes 1 and 2 stay mutually exclusive (D7).
+
+**Rationale:** attributing FC 08/43 to a device changes the Gate 1 record path
+(mbap.py's supported set and the anomaly shape), which is complete and tested;
+folding that into the first detection commit would mix a parser change with new
+logic, so the claim is narrowed instead. Synthesizing a record for an unanswered
+write would assert an outcome the capture does not show; the orphan count
+already surfaces it. The four tables are separate address spaces in the Modbus
+specification: input register 40 and holding register 40 are different data, and
+a pooled set would report a write to a never-touched holding register as class 1
+when it is class 2. An exception (for example illegal data address) means the
+operation did not succeed; counting it would let a failed probe make an address
+look normal. D6 offered a packet-count split, but TransactionRecords carry no
+packet index to cut on. Pcap timestamps are epoch seconds; any local zone would
+be a guess about the capture site. D7's concern is one packet flagged twice
+reading as noise: one finding per transaction keeps that, and listing every
+matched class keeps both true facts (the FC is new, and the register has only
+ever been read). Dropping either class hides real signal.
+
+**Rejected:** attributing FC 08/43 in the first cut (couples a Gate 1 parser
+change to new detection logic); synthesized records for unanswered writes
+(asserts an unseen outcome); one pooled address set (conflates tables);
+exceptions in the read-set or write-set (failed probes become baseline);
+packet-count split (no index to cut on); local time for class 4 (unknown capture
+zone); timestamps without an offset (silently local); two findings for one
+transaction (the noise D7 rejected); class 5 only or class 1 only for the
+combined case (drops one true fact).
+
+**Revisit:** FC 08/43 device attribution (own commit, own entry); classes 3 and 4
+once N and the arming details are set; unanswered writes if real captures show
+material write orphans.
+
 ---
 
 ## Standing assumption (not a decision, a boundary)

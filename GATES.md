@@ -15,8 +15,8 @@ tracked forward, not retroactive reopenings.
 | Gate | Scope | Pass criteria (see DESIGN.md) | Status | Commit |
 |---|---|---|---|---|
 | 1. Ingestion | pcap to per-transaction records; direction attribution (D10), pairing (D11), malformed-input corpus (D4) | known-good pcaps parse; pipelined/split-ADU handled; malformed corpus is deterministic, fails closed, never crashes | Complete | `7ebc595` |
-| 2. Baseline construction | per-device baseline from a user-designated normal period (D6) | baseline object serializable, inspectable, readable by a human without reading code | Planned | - |
-| 3. Anomaly detection | the five heuristics (D7/D8) over the post-baseline period | injected anomaly flagged; clean pcap yields zero false positives; both in CI | Planned | - |
+| 2. Baseline construction | per-device baseline from a user-designated normal period (D6) | baseline object serializable, inspectable, readable by a human without reading code | In progress | - |
+| 3. Anomaly detection | the five heuristics (D7/D8) over the post-baseline period | injected anomaly flagged; clean pcap yields zero false positives; both in CI | In progress | - |
 | 4. Reporting | human-readable + `--json`; terminal-escape sanitization of packet-derived bytes | "what happened" separated from "why flagged"; sanitization test present | Planned | - |
 | 5. CI and tests | pinned lockfile; CI on every push; prose + golden gates; coverage floor | `make check` green (prose gate, golden freshness, ruff, tests at the 97.9% coverage floor) on every push | In progress | - |
 
@@ -25,6 +25,14 @@ introduced by the commit that adds this file, so at that commit they are not yet
 proven green in CI. Status stays "In progress" until CI passes on the pushed
 commit; a follow-up then flips it to "Met" with the hash. Status is never ahead
 of the evidence.
+
+Gates 2 and 3 note (2026-10-28): Gate 1 is complete (`7ebc595`). Gates 2 and 3
+are in progress under DECISIONS.md D12; no baseline or detection code exists yet.
+The first cut implements class 1 (unscheduled write), class 2 (write to unknown
+register) and class 5 (never-seen function code, supported FCs only). Class 3
+(polling-interval break) and class 4 (off-hours activity) are deferred until N
+and the arming details are decided. Gate 3 stays "In progress" until all five
+classes are implemented and its pass criteria pass in CI.
 
 ## Coverage
 

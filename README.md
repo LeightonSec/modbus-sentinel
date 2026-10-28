@@ -10,9 +10,10 @@
 > behavior consistent with its own history?
 
 **Status: Gate 1 (ingestion) complete (commit `7ebc595`); Gate 2 (baseline
-construction) next.** Live gate status is tracked in [GATES.md](GATES.md). The
-full spec is in [DESIGN.md](DESIGN.md); every locked decision with rationale and
-rejected alternatives is in [DECISIONS.md](DECISIONS.md).
+construction) and Gate 3 (anomaly detection) in progress.** Live gate status is
+tracked in [GATES.md](GATES.md). The full spec is in [DESIGN.md](DESIGN.md);
+every locked decision with rationale and rejected alternatives is in
+[DECISIONS.md](DECISIONS.md).
 
 ---
 
@@ -40,33 +41,39 @@ is always answerable in plain English.
 
 ## The five anomaly classes
 
-Per device, identified as (server IP, unit ID), never unit ID alone, a baseline
-period of the capture establishes normal. The detection period is then checked for:
+**Not yet implemented.** Baseline (Gate 2) and detection (Gate 3) are in
+progress; see [GATES.md](GATES.md). The design: per device, identified as
+(server IP, unit ID), never unit ID alone, a baseline period of the capture
+establishes normal, and the detection period is checked for:
 
 1. **Unscheduled write:** write to a register only ever read in baseline
 2. **Write to unknown register:** write to a register the baseline never saw
    (recon-then-strike pattern)
 3. **Polling-interval break:** per poll group, median ± N·MAD band, armed at
-   ≥ 10 baseline observations
+   ≥ 10 baseline observations (deferred until N is decided)
 4. **Off-hours activity:** traffic outside the device's observed operational
-   window (arming rules in DESIGN.md)
-5. **Never-seen function code:** any FC absent from the device's baseline set,
-   including diagnostics (FC 08) and device identification (FC 43)
+   window (arming rules in DESIGN.md; deferred)
+5. **Never-seen function code:** any supported FC absent from the device's
+   baseline set. FC 08 and FC 43 are not yet covered (DECISIONS.md D12)
 
-Each is a heuristic, not a proof of malice. Reports say **anomalous, not attack**,
-and every skipped heuristic is stated with its reason. A silent gap misleads the
-analyst into believing coverage that doesn't exist.
+Classes 1 and 2 compare addresses per Modbus table (coils, discrete inputs,
+holding registers, input registers). Each class is a heuristic, not a proof of
+malice. Reports will say **anomalous, not attack**, and will state every skipped
+heuristic with its reason. A silent gap misleads the analyst into believing
+coverage that doesn't exist.
 
 ## Trust boundaries: read before trusting the output
 
-- **The baseline period is assumed clean.** You designate it
-  (`--baseline-until`); the tool will not guess. An attacker present during the
-  baseline is learned as normal. This is structural to all baseline-and-deviation
-  detection, not a fixable bug.
+- **The baseline period is assumed clean.** You will designate it
+  (`--baseline-until`, a timestamp; not yet wired into analysis); the tool will
+  not guess. An attacker present during the baseline is learned as normal. This
+  is structural to all baseline-and-deviation detection, not a fixable bug.
 - **The pcap is treated as hostile input.** The adversary being analysed authored
   some of those bytes. Malformed frames become counted parse-anomaly records
-  (never crashes, never silent skips), and packet-derived bytes are escaped before
-  reaching your terminal.
+  (never crashes, never silent skips). Escaping packet-derived bytes before they
+  reach your terminal is a Gate 4 requirement and is not built yet.
+- **Unanswered writes are not analysed.** A write with no response is counted as
+  an orphan request, not passed to detection (DECISIONS.md D12).
 - **Timestamps are capture-clock, not device-clock.**
 
 ## Dependency surface
