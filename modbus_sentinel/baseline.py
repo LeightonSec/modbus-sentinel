@@ -174,26 +174,36 @@ def split_records(
     )
 
 
-def _record_range(r: TransactionRecord) -> tuple[int, int]:
+def record_range(r: TransactionRecord) -> tuple[int, int]:
+    """Inclusive address range a request covers (D12); FC 05/06 cover one."""
     qty = 1 if r.function_code in (5, 6) else r.quantity
     return r.start_address, r.start_address + qty - 1
 
 
-def _check_record(r: TransactionRecord, until: float) -> None:
-    where = f"{r.server_ip} unit {r.unit_id} FC {r.function_code:02d}"
+def _where(r: TransactionRecord) -> str:
+    return f"{r.server_ip} unit {r.unit_id} FC {r.function_code:02d}"
+
+
+def validate_record(r: TransactionRecord) -> None:
+    """Shared by baseline and detection: supported FCs only (D12), and an
+    address range past 65535 is malformed Modbus and raises (A12)."""
     if r.function_code not in READ_TABLE and r.function_code not in WRITE_TABLE:
-        raise ValueError(f"{where}: unsupported function code {r.function_code:02d}")
-    if r.request_ts >= until:
-        raise ValueError(f"{where}: request at {r.request_ts} is not before the baseline end {until}")
-    start, end = _record_range(r)
+        raise ValueError(f"{_where(r)}: unsupported function code {r.function_code:02d}")
+    start, end = record_range(r)
     if end > MAX_ADDRESS:
-        raise ValueError(f"{where}: address range {start}-{end} exceeds 65535 (malformed Modbus address)")
+        raise ValueError(f"{_where(r)}: address range {start}-{end} exceeds 65535 (malformed Modbus address)")
+
+
+def _check_record(r: TransactionRecord, until: float) -> None:
+    validate_record(r)
+    if r.request_ts >= until:
+        raise ValueError(f"{_where(r)}: request at {r.request_ts} is not before the baseline end {until}")
 
 
 def _poll_groups(recs: list[TransactionRecord]) -> tuple[PollGroup, ...]:
     groups: dict[tuple[int, int, int], list[float]] = {}
     for r in recs:
-        start, end = _record_range(r)
+        start, end = record_range(r)
         groups.setdefault((r.function_code, start, end - start + 1), []).append(r.request_ts)
     out = []
     for (fc, start, qty), times in sorted(groups.items()):
@@ -241,9 +251,9 @@ def _build_device(key: DeviceKey, recs: list[TransactionRecord]) -> DeviceBaseli
     }
     for r in normal:
         if r.function_code in WRITE_TABLE:
-            ranges[WRITE_TABLE[r.function_code]][1].append(_record_range(r))
+            ranges[WRITE_TABLE[r.function_code]][1].append(record_range(r))
         else:
-            ranges[READ_TABLE[r.function_code]][0].append(_record_range(r))
+            ranges[READ_TABLE[r.function_code]][0].append(record_range(r))
     tables = {
         t: TableSets(AddressSet.from_ranges(rd), AddressSet.from_ranges(wr))
         for t, (rd, wr) in ranges.items()

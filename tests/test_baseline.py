@@ -24,6 +24,7 @@ from pcap_builder import (
     write_multi_resp,
     write_single_req,
 )
+from record_builder import rec
 from scapy.utils import wrpcap
 
 from modbus_sentinel.baseline import (
@@ -47,30 +48,6 @@ HOUR = 3600.0
 FAR_UNTIL = T0 + 10 * 365 * DAY  # after every fixture timestamp, inside datetime's range
 GOLDEN = Path(__file__).parent / "golden_baseline.txt"
 GOLDEN_UNTIL = T0 + 60
-
-
-def rec(
-    ts: float,
-    fc: int = 3,
-    start: int = 100,
-    qty: int = 10,
-    unit: int = 1,
-    ip: str = SERVER,
-    exc: int | None = None,
-) -> TransactionRecord:
-    return TransactionRecord(
-        request_ts=ts,
-        response_ts=ts + 0.05,
-        server_ip=ip,
-        unit_id=unit,
-        function_code=fc,
-        is_write=fc in (5, 6, 15, 16),
-        is_exception=exc is not None,
-        exception_code=exc,
-        start_address=start,
-        quantity=None if fc in (5, 6) else qty,
-        value=None,
-    )
 
 
 def ingest(tmp_path: Path, *conns: Conn) -> IngestResult:
