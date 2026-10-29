@@ -22,7 +22,7 @@ from pcap_builder import (
 )
 from scapy.layers.inet import TCP
 from scapy.layers.l2 import Ether
-from scapy.utils import wrpcap
+from scapy.utils import rdpcap, wrpcap
 
 from modbus_sentinel.ingest import IngestResult, ingest_pcap
 
@@ -142,6 +142,29 @@ def test_tid_reuse_orphans_old_request(tmp_path: Path) -> None:
     assert rec.start_address == 200  # new request took the slot
     (a,) = result.anomalies
     assert a.kind == "orphan_request" and "tid_reuse" in a.detail
+
+
+def test_outstanding_table_at_cap_counts_request_not_tracked(tmp_path: Path, monkeypatch) -> None:
+    """D11 state cap. The real cap is 65536 (the transaction-id space); it is
+    lowered to 2 here so the branch runs on three requests. The third request
+    is counted as state_overflow and never tracked, so its response finds
+    nothing to pair with, while the two requests already tracked still pair."""
+    monkeypatch.setattr("modbus_sentinel.ingest.OUTSTANDING_CAP", 2)
+    c = Conn()
+    c.send(read_req(tid=1, addr=100))
+    c.send(read_req(tid=2, addr=200))
+    c.send(read_req(tid=3, addr=300), at=1001.0)
+    c.recv(read_resp(tid=1))
+    c.recv(read_resp(tid=2))
+    c.recv(read_resp(tid=3))
+    result = ingest(tmp_path, c)
+    assert sorted(r.start_address for r in result.records) == [100, 200]
+    overflow, orphan = result.anomalies
+    assert overflow.kind == "state_overflow"
+    assert overflow.detail == "outstanding-request table at cap 2; request tid=3 unit=1 counted, not tracked"
+    assert overflow.timestamp == 1001.0
+    assert orphan.kind == "orphan_response"
+    assert orphan.detail == "response tid=3 unit=1 with no outstanding request"
 
 
 def test_unit_id_in_pairing_key(tmp_path: Path) -> None:
@@ -322,6 +345,28 @@ def test_non_tcp_packets_tallied(tmp_path: Path) -> None:
     result = ingest_pcap(str(path))
     assert result.packets_non_tcp == 1
     assert len(result.records) == 1
+
+
+ETH_TRAILER = b"\x00\x00\x00\x00"
+
+
+def test_ethernet_trailer_trimmed_to_ip_declared_length(tmp_path: Path) -> None:
+    """A frame can carry bytes after the IP datagram (Ethernet padding, or a
+    trailer added by the capturing NIC). On read-back scapy keeps them as a
+    Padding layer under TCP, so bytes(tcp.payload) is the Modbus request plus
+    the trailer. ingest trims the payload to the length the IP header declares.
+    Without the trim, the 4 trailer bytes would stay in the client-side stream after the request."""
+    c = Conn()
+    req = c.send(read_req(tid=1, addr=100, qty=10))
+    c.pkts[-1] = padded = Ether(bytes(req) + ETH_TRAILER)
+    padded.time = req.time
+    c.recv(read_resp(tid=1, qty=10))
+    result = ingest(tmp_path, c)
+    written = rdpcap(str(tmp_path / "fixture.pcap"))[3]  # after the 3-packet handshake
+    assert bytes(written[TCP].payload) == read_req(tid=1, addr=100, qty=10) + ETH_TRAILER
+    assert result.anomalies == []
+    (rec,) = result.records
+    assert (rec.function_code, rec.start_address, rec.quantity) == (3, 100, 10)
 
 
 # --- D13: FC 08 and FC 43 pair into address-less records ------------------------

@@ -136,6 +136,125 @@ def test_malformed_pdu_costs_one_adu_not_the_stream() -> None:
     assert isinstance(out[1], ParsedADU) and out[1].transaction_id == 2
 
 
+# A good FC 3 ADU for each direction, fed ahead of the bad frame so the anomaly
+# offset is not 0 and the good ADU proves the bad frame costs only itself.
+GOOD_FC3 = {
+    True: bytes([3]) + (0).to_bytes(2, "big") + (1).to_bytes(2, "big"),
+    False: bytes([3, 2, 0xAB, 0xCD]),
+}
+
+
+def anomaly_after_good_adu(pdu: bytes, is_request: bool) -> tuple[ParseAnomaly, int]:
+    """Feed one good ADU, then pdu as the second frame. Returns the one anomaly
+    and the offset it must carry: the first byte after the good frame."""
+    good = frame(GOOD_FC3[is_request], transaction_id=2)
+    parser = StreamParser(is_request=is_request)
+    out = parser.feed(good + frame(pdu))
+    assert parser.finish() == []
+    assert len(out) == 2, out
+    assert isinstance(out[0], ParsedADU) and out[0].transaction_id == 2
+    assert isinstance(out[1], ParseAnomaly), out[1]
+    return out[1], len(good)
+
+
+@pytest.mark.parametrize("fc", [1, 2, 3, 4])
+@pytest.mark.parametrize("data", [b"\x00\x10\x08", b"\x00\x10\x00\x08\x00"])
+def test_read_request_wrong_data_length_malformed(fc: int, data: bytes) -> None:
+    """A read request is address(2) plus quantity(2): three or five data bytes
+    is malformed. Both inputs would otherwise yield a quantity of 8."""
+    a, at = anomaly_after_good_adu(bytes([fc]) + data, is_request=True)
+    assert a.kind == "malformed_pdu" and a.offset == at
+    assert a.detail == f"fc {fc} request with {len(data)} data bytes (want 4)"
+
+
+@pytest.mark.parametrize("fc", [15, 16])
+def test_write_multi_request_missing_byte_count_malformed(fc: int) -> None:
+    """An FC 15/16 request needs address, quantity and byte count (5 bytes)
+    before any payload. Four data bytes is the response shape sent as a request."""
+    a, at = anomaly_after_good_adu(bytes([fc]) + (0x0100).to_bytes(2, "big") + (1).to_bytes(2, "big"), is_request=True)
+    assert a.kind == "malformed_pdu" and a.offset == at
+    assert a.detail == f"fc {fc} request with 4 data bytes (want >= 5)"
+
+
+@pytest.mark.parametrize(
+    "fc,quantity,detail",
+    [
+        (15, 0, "fc 15 response quantity 0 outside 1..1968"),
+        (15, 1969, "fc 15 response quantity 1969 outside 1..1968"),
+        (16, 0, "fc 16 response quantity 0 outside 1..123"),
+        (16, 124, "fc 16 response quantity 124 outside 1..123"),
+    ],
+)
+def test_write_multi_response_quantity_out_of_range_malformed(fc: int, quantity: int, detail: str) -> None:
+    """The FC 15/16 response echoes the quantity; zero, or one past the spec
+    maximum (1968 coils, 123 registers), is malformed, as on the request side."""
+    a, at = anomaly_after_good_adu(bytes([fc]) + (0x0100).to_bytes(2, "big") + quantity.to_bytes(2, "big"), is_request=False)
+    assert a.kind == "malformed_pdu" and a.offset == at
+    assert a.detail == detail
+
+
+# Spec quantity limits (Modbus Application Protocol V1.1b3), pinned as literals
+# rather than imported from mbap._MAX_QUANTITY, so a wrong dict value fails here.
+
+
+@pytest.mark.parametrize(
+    "fc,quantity",
+    [(1, 1), (1, 2000), (2, 1), (2, 2000), (3, 1), (3, 125), (4, 1), (4, 125)],
+)
+def test_read_request_quantity_at_spec_bounds_parses(fc: int, quantity: int) -> None:
+    adu = parse_one(bytes([fc]) + (0).to_bytes(2, "big") + quantity.to_bytes(2, "big"), is_request=True)
+    assert (adu.function_code, adu.quantity) == (fc, quantity)
+
+
+@pytest.mark.parametrize(
+    "fc,quantity,byte_count",
+    [(15, 1, 1), (15, 1968, 246), (16, 1, 2), (16, 123, 246)],
+)
+def test_write_multi_request_quantity_at_spec_bounds_parses(fc: int, quantity: int, byte_count: int) -> None:
+    """Byte count and payload are consistent with the quantity. At the maximum
+    the PDU is 252 bytes (MBAP length 253), inside the 254 cap."""
+    pdu = bytes([fc]) + (0).to_bytes(2, "big") + quantity.to_bytes(2, "big") + bytes([byte_count]) + b"\x00" * byte_count
+    adu = parse_one(pdu, is_request=True)
+    assert (adu.function_code, adu.quantity, adu.byte_count) == (fc, quantity, byte_count)
+
+
+@pytest.mark.parametrize("fc,quantity", [(15, 1), (15, 1968), (16, 1), (16, 123)])
+def test_write_multi_response_quantity_at_spec_bounds_parses(fc: int, quantity: int) -> None:
+    adu = parse_one(bytes([fc]) + (0x0100).to_bytes(2, "big") + quantity.to_bytes(2, "big"), is_request=False)
+    assert (adu.function_code, adu.quantity) == (fc, quantity)
+
+
+@pytest.mark.parametrize(
+    "fc,quantity,detail",
+    [
+        (1, 2001, "fc 1 request quantity 2001 outside 1..2000"),
+        (2, 2001, "fc 2 request quantity 2001 outside 1..2000"),
+        (3, 126, "fc 3 request quantity 126 outside 1..125"),
+        (4, 126, "fc 4 request quantity 126 outside 1..125"),
+    ],
+)
+def test_read_request_quantity_past_spec_max_malformed(fc: int, quantity: int, detail: str) -> None:
+    a, at = anomaly_after_good_adu(bytes([fc]) + (0).to_bytes(2, "big") + quantity.to_bytes(2, "big"), is_request=True)
+    assert a.kind == "malformed_pdu" and a.offset == at
+    assert a.detail == detail
+
+
+@pytest.mark.parametrize(
+    "fc,quantity,detail",
+    [
+        (15, 1969, "fc 15 request quantity 1969 outside 1..1968"),
+        (16, 124, "fc 16 request quantity 124 outside 1..123"),
+    ],
+)
+def test_write_multi_request_quantity_past_spec_max_malformed(fc: int, quantity: int, detail: str) -> None:
+    """Byte count 0 and no payload: the quantity check runs before the byte count
+    check. A consistent payload for FC 16 at 124 registers (248 bytes) would push
+    the MBAP length to 255, past the 254 cap, and fail framing instead."""
+    a, at = anomaly_after_good_adu(bytes([fc]) + (0).to_bytes(2, "big") + quantity.to_bytes(2, "big") + b"\x00", is_request=True)
+    assert a.kind == "malformed_pdu" and a.offset == at
+    assert a.detail == detail
+
+
 @pytest.mark.timeout(5)
 def test_skip_cascade_realigns_on_7_multiple() -> None:
     """14 garbage bytes = two skip-7s, then the valid ADU behind them parses."""
