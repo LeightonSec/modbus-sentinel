@@ -52,18 +52,31 @@ and is not attributed. The report states this limit as fixed text, not a count.
 `make check` enforces `--cov-fail-under=97.9` via `addopts`, so the floor applies
 to every pytest invocation. `[tool.coverage.run].omit` excludes only `tests/*`:
 since `c021463`, `modbus_sentinel/cli.py` is measured, with its `__main__` guard
-marked `# pragma: no cover`. A local run on Python 3.12 measured 290 tests and
-99.31% total. Its only missed statements were mbap.py:288, 315, 376 and
-ingest.py:238-249, 375, so `cli.py` and `report.py` are at 100%. CI run
-40821511536 on `2701f9a` measured, on each of Python 3.10, 3.11 and 3.12, 866
-statements, 6 missed, 99.31% total, and reported the 97.9% floor reached.
+marked `# pragma: no cover`. The figures are statement coverage; branch
+coverage is not measured (no `branch` setting in `[tool.coverage]`, no
+`--cov-branch` in `addopts`). A local run on Python 3.12 measured 328 tests and
+866 statements, 0 missed, 100% total. CI run 40926915543 on `61ada8a` measured,
+on each of Python 3.10, 3.11 and 3.12, 866 statements, 0 missed, 100% total,
+and reported the 97.9% floor reached. Before that, at `2701f9a` (CI run
+40821511536), CI measured 866 statements, 6 missed, 99.31%; the missed
+statements were mbap.py:288, 315, 376 and ingest.py:238-249, 375.
 
 The floor is 97.9, not 98, on purpose: it was set when coverage was 287/293 =
 97.95% of the parser and ingest layer (Gate 1), which the coverage table
 *displays* as 98% while `--cov-fail-under` compares the unrounded value. The six
 statements uncovered then were error branches (mbap.py:186, 213, 269 and
-ingest.py:237-248, 373 at that time). The current missed statements are listed
-above.
+ingest.py:237-248, 373 at that time). No statement is missed now (see above).
+
+Mutation checks (run locally by a script on throwaway copies of the repo, not in
+CI). Each mutation was run against the tests selected for it, not the whole
+suite. 12 mutations of the coverage-test targets and the quantity-limit
+boundaries were killed (M1 to M6, M8 to M13). M7 (changing `<=` to `<` at the FC
+15/16 response quantity check, mbap.py:375) survived the eight tests selected
+for it. A read of `tests/test_mbap.py` found no test with a quantity at the spec
+maximum, so boundary tests were added for read requests and for FC 15/16
+requests and responses. The anchored equivalent M10 is now killed. M7 itself was
+not re-run on the new suite. Quantity limits are pinned in those tests as spec
+literals (2000, 125, 1968, 123), not imported from the parser.
 
 ## Gate 1 corpus
 
@@ -115,7 +128,7 @@ owner's call; this file only records existence.
 **Against Gate 1 (scope note, not an untested gap):**
 
 - **Pairing is tested at the pcap layer, not in the `.bin` corpus.** D11 pairing
-  is covered by the ~25 tests in `tests/test_ingest.py`, including the
+  is covered by the 29 test functions in `tests/test_ingest.py`, including the
   adversarial cases: response with no outstanding request (orphan), unanswered
   request (orphan), duplicate in-flight transaction ID (tid reuse), FC mismatch,
   unit-id keying, pipelined and split ADUs, retransmission, and sequence gaps.
