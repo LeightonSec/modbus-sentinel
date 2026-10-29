@@ -1,11 +1,19 @@
 # Gate 1 malformed-input corpus
 
-19 fixtures = **18 reject/partial + 1 accept**. Every fixture is built from
+22 fixtures = **21 reject/partial + 1 accept**. Every fixture is built from
 literal bytes by `generate_corpus.py` (synthetic, deterministic, no captured
 traffic) and its exact behaviour is pinned by the golden signature in
 `../golden_corpus.py` (ordered `(kind, offset)` per anomaly and `(fc, tid)` per
 recovered ADU). This file says what each fixture is *meant* to break; the golden
 says what it *does*, and `test_corpus.py` asserts the two agree.
+
+Every fixture runs through the **request-side** parser unless it is listed in
+`RESPONSE_FIXTURES` in `../golden_support.py`; those are marked
+**(response-side)** below. The golden pins kind and offset only, and for
+`fc43_object_overrun` those are identical request-side and response-side
+(`malformed_pdu` at offset 0), so the golden does not enforce direction.
+Direction is enforced by `test_response_fixtures_use_response_parser` in
+`../test_corpus.py` and by the detail test in `../test_mbap.py`.
 
 Classified by expected outcome, not by "malformed", because outcome is what the
 parser's fail-closed contract is actually about.
@@ -51,3 +59,6 @@ PDU-level (well-framed ADU, bad PDU costs exactly that one ADU):
 | `fc6_short_data` | `malformed_pdu` | FC6 write-single, PDU truncated to 2 bytes. |
 | `exception_bit_on_request` | `unknown_function_code` | Request-side `0x83` (FC3 with the exception bit): must surface as unknown FC, never be laundered to a well-formed FC3 (round-6 guard). |
 | `exception_bit_request_padded` | `unknown_function_code` | Same guard with extra intra-frame PDU bytes (`0x99 0x99` inside the framed length): proves a bad-FC ADU consumes its whole framed PDU, not a fixed size. Renamed from `exception_trailing_garbage`; the bytes are intra-frame, not trailing garbage outside a frame (a real outside-the-frame case is a Gate 2 gap in GATES.md). |
+| `fc08_short_data` | `malformed_pdu` | FC 08 diagnostics with one data byte: the sub-function needs two (D13). |
+| `fc43_other_mei` | `unknown_function_code` | FC 43 with MEI type `0x0D` (CANopen): only MEI `0x0E` is parsed, so this stays unknown, not malformed and not an ADU (D13). |
+| `fc43_object_overrun` **(response-side)** | `malformed_pdu` | FC 43 read device id response whose second object declares 9 value bytes but carries 4: the object-list walk must stop at the PDU end. Detail `fc 43 response object list overruns pdu` is pinned in `test_mbap.py` (the golden does not pin detail). |

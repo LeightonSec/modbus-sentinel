@@ -1,6 +1,7 @@
 """Malformed-input corpus gate (DESIGN.md Gate 1 pass criterion 3 / D4).
 
-Every .bin under tests/corpus/ is fed to the parser whole AND byte-by-byte.
+Every .bin under tests/corpus/ is fed to the parser whole AND byte-by-byte, in
+its own direction: request-side unless listed in golden_support.RESPONSE_FIXTURES.
 Pass = no exception, no hang (pytest-timeout), every output is a typed record,
 full-record output is identical run-to-run and across feed granularities, and
 each fixture matches its pinned golden signature (ordered records, anomaly kinds
@@ -12,7 +13,14 @@ from pathlib import Path
 import pytest
 
 from golden_corpus import GOLDEN
-from golden_support import CORPUS_DIR, corpus_files, run_parser, signature
+from golden_support import (
+    CORPUS_DIR,
+    RESPONSE_FIXTURES,
+    corpus_files,
+    is_request_fixture,
+    run_parser,
+    signature,
+)
 from modbus_sentinel.mbap import ParseAnomaly, ParsedADU, StreamParser
 
 CORPUS_FILES = corpus_files()
@@ -57,11 +65,41 @@ def test_golden_covers_every_fixture() -> None:
     )
 
 
+def test_response_fixtures_exist() -> None:
+    """A misspelt name in RESPONSE_FIXTURES would silently run that fixture
+    request-side again. Every listed name must be a real fixture, on disk and in
+    the generator."""
+    on_disk = {p.stem for p in CORPUS_FILES}
+    assert RESPONSE_FIXTURES, "RESPONSE_FIXTURES is empty"
+    assert RESPONSE_FIXTURES <= on_disk, f"not on disk: {RESPONSE_FIXTURES - on_disk}"
+    assert RESPONSE_FIXTURES <= GENERATOR_KEYS, f"not generated: {RESPONSE_FIXTURES - GENERATOR_KEYS}"
+
+
+@pytest.mark.parametrize("name", sorted(RESPONSE_FIXTURES))
+def test_response_fixtures_use_response_parser(name: str) -> None:
+    """The golden pins (kind, offset) only, and for fc43_object_overrun those are
+    identical request-side and response-side, so the golden cannot tell the
+    directions apart. This test enforces the direction: the harness must choose
+    the response parser, and the full records must differ between directions."""
+    data = (CORPUS_DIR / f"{name}.bin").read_bytes()
+    assert not is_request_fixture(name)
+    chosen = run_parser(data, is_request=is_request_fixture(name))
+    assert chosen == run_parser(data, is_request=False)
+    assert chosen != run_parser(data, is_request=True)  # direction changes the output, so this test can fail
+
+
+def test_request_fixture_control() -> None:
+    """Control for the direction helper: a real request-side fixture maps to the
+    request parser."""
+    assert (CORPUS_DIR / "pipelined_valid_3.bin").is_file()
+    assert is_request_fixture("pipelined_valid_3") is True
+
+
 @pytest.mark.timeout(5)
 @pytest.mark.parametrize("path", CORPUS_FILES, ids=lambda p: p.stem)
 def test_never_crashes_and_fails_closed(path: Path) -> None:
     data = path.read_bytes()
-    out = run_parser(data)
+    out = run_parser(data, is_request=is_request_fixture(path.stem))
     assert all(isinstance(r, (ParsedADU, ParseAnomaly)) for r in out)
     anomalies = [r for r in out if isinstance(r, ParseAnomaly)]
     if path.stem in CLEAN_FIXTURES:
@@ -78,9 +116,10 @@ def test_deterministic_full_records(path: Path) -> None:
     ADU fields) that the golden signature deliberately does not pin. Golden and
     this test cover different things; both are load-bearing."""
     data = path.read_bytes()
-    whole = run_parser(data)
-    again = run_parser(data)
-    byte_by_byte = run_parser(data, chunk_size=1)
+    is_request = is_request_fixture(path.stem)
+    whole = run_parser(data, is_request=is_request)
+    again = run_parser(data, is_request=is_request)
+    byte_by_byte = run_parser(data, chunk_size=1, is_request=is_request)
     assert whole == again, f"{path.stem}: output not deterministic run-to-run"
     assert whole == byte_by_byte, f"{path.stem}: output changes with feed chunking"
 
@@ -94,8 +133,9 @@ def test_matches_golden_whole_and_bytewise(path: Path) -> None:
     than being excused by a comment."""
     expected = GOLDEN[path.stem]
     data = path.read_bytes()
-    assert signature(data, None) == expected, f"{path.stem}: whole-feed signature drift"
-    assert signature(data, 1) == expected, f"{path.stem}: byte-by-byte signature drift"
+    is_request = is_request_fixture(path.stem)
+    assert signature(data, None, is_request=is_request) == expected, f"{path.stem}: whole-feed signature drift"
+    assert signature(data, 1, is_request=is_request) == expected, f"{path.stem}: byte-by-byte signature drift"
 
 
 @pytest.mark.timeout(5)
@@ -123,9 +163,11 @@ def test_exception_bit_on_request_flagged_not_laundered() -> None:
 
 @pytest.mark.timeout(5)
 def test_response_side_never_crashes() -> None:
-    """Crash smoke only: the corpus is request-formatted, so through the response
-    parser it mostly exercises the byte-count-mismatch path. Semantic response
-    coverage lives in test_mbap.py's targeted unit tests."""
+    """Crash smoke only: every fixture through the response parser, whatever its
+    own direction. Most of the corpus is request-formatted, so here it mostly
+    exercises the byte-count-mismatch path. Direction for the RESPONSE_FIXTURES
+    is enforced by test_response_fixtures_use_response_parser, not by the golden;
+    semantic response coverage also lives in test_mbap.py's targeted unit tests."""
     for path in CORPUS_FILES:
         parser = StreamParser(is_request=False)
         out = parser.feed(path.read_bytes())

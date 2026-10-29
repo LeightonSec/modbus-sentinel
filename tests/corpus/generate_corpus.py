@@ -12,7 +12,9 @@ Growth log (mirror of D4): 16 fixtures at first draft; 18 after round 5, when
 the chunking-determinism test falsified the discard-remainder header policy and
 the skip-cascade pair was added to pin the replacement's behavior; 19 after
 round 6, when D11's exception-FC review exposed that the request-side
-exception-bit path was correct but unguarded.
+exception-bit path was correct but unguarded; 22 after D13 (FC 08 and FC 43
+attribution), one of them response-side (tests/golden_support.py
+RESPONSE_FIXTURES).
 """
 
 from pathlib import Path
@@ -66,6 +68,22 @@ CORPUS: dict[str, bytes] = {
     # trailing garbage outside a frame. A true outside-the-frame case is a
     # Gate 2 corpus gap, logged in GATES.md.)
     "exception_bit_request_padded": frame(bytes([0x83, 0x02, 0x99, 0x99])),
+    # -- D13: FC 08 and FC 43 ------------------------------------------------
+    # FC 08 with one data byte: the sub-function needs two.
+    "fc08_short_data": frame(bytes([0x08, 0x00])),
+    # FC 43 request with MEI type 0x0D (CANopen): only 0x0E is parsed, so this
+    # must stay unknown_function_code, not malformed and not an ADU.
+    "fc43_other_mei": frame(bytes([0x2B, 0x0D, 0x01, 0x00])),
+    # RESPONSE-side (tests/golden_support.py RESPONSE_FIXTURES): a read device
+    # id response whose second object declares 9 value bytes but carries 4.
+    # Request-side it would fail the request length check and never reach the
+    # object walk this fixture exists to exercise. The golden pins only kind and
+    # offset, which are the same either way; test_corpus.py enforces direction.
+    "fc43_object_overrun": frame(
+        bytes([0x2B, 0x0E, 0x01, 0x01, 0x00, 0x00, 0x02])
+        + bytes([0x00, 0x05]) + b"ACME!"
+        + bytes([0x01, 0x09]) + b"V1.0"
+    ),
     "garbage_after_valid_adu": frame(FC3_READ_REQ) + mbap(2, 0) + b"\xff" * 5,
     "all_ff": b"\xff" * 64,
     "single_byte": b"\x00",
