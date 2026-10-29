@@ -70,7 +70,10 @@ detection period is checked for:
 4. **Off-hours activity:** traffic outside the device's observed operational
    window (arming rules in DESIGN.md; not yet implemented)
 5. **Never-seen function code:** any supported FC absent from the device's
-   baseline set. FC 08 and FC 43 are not yet covered (DECISIONS.md D12)
+   baseline set, including FC 08 (diagnostics) and FC 43 (device
+   identification, MEI type 0x0E) (DECISIONS.md D13). Not caught: FC 08
+   sub-function 0x0004 (force listen only) gets no response by specification,
+   so it stays an unanswered request, and the report says so.
 
 Classes 1 and 2 compare addresses per Modbus table (coils, discrete inputs,
 holding registers, input registers). Each class is a heuristic, not a proof of

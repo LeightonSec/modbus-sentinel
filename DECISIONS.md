@@ -389,6 +389,74 @@ combined case (drops one true fact).
 once N and the arming details are set; unanswered writes if real captures show
 material write orphans.
 
+## D13: FC 08 and FC 43 attribution (follows D12)
+
+**Decision:** FC 08 (diagnostics) and FC 43 with MEI type 0x0E (read device
+identification) are parsed as address-less transactions so class 5 can fire on
+them for a known device. They become TransactionRecords with a device key, a
+function code, a sub-function and no address range. They never enter the
+per-table address sets or the poll groups, and classes 1 and 2 never fire on
+them.
+
+- **Sub-function field:** ParsedADU, TransactionRecord and the detection
+  finding's WhatHappened gain an optional last field `subfunction`, None for
+  every other function code. FC 08 stores its sub-function code; FC 43 stores
+  the MEI type. Existing fields keep their meaning; `start_address`, `quantity`
+  and `value` are None for these two function codes.
+- **Supersedes:** D3's 'eight in-scope FCs' (now ten) and D3's '~100 lines'
+  estimate, and extends the D11 record shape with the optional last field
+  subfunction. This entry does not edit D3 or D11; the log is append-only.
+- **Accepted shapes:** FC 08 request and response: sub-function (2 bytes) plus
+  data in 2-byte words; fewer than 2 data bytes or an odd length is
+  `malformed_pdu`. Any sub-function value is accepted: a bogus one is
+  behavioural signal, as with exception codes. FC 43 request: MEI 0x0E, read
+  code 1 to 4, object id; exactly 3 data bytes. FC 43 response: MEI 0x0E, read
+  code 1 to 4, conformity, more-follows 0x00 or 0xFF, next object id, object
+  count, then the object list, whose declared lengths must consume the PDU
+  exactly and whose count must match. Object values are validated and
+  discarded, never stored.
+- **Still unknown:** every other function code, and FC 43 with any other MEI
+  type, stays `unknown_function_code`. Request-side FC | 0x80 stays
+  `unknown_function_code` (non-laundering, round 6).
+- **Pairing:** unchanged (D11): key (transaction id, unit id), match on function
+  code only, with no sub-function echo check. Exception responses to FC 08 and
+  FC 43 pair as records.
+- **Poll groups:** FC 08 and FC 43 are excluded; they carry no address or
+  quantity to key a group on.
+- **Unanswered requests:** unchanged (D12). FC 08 sub-function 0x0004 (force
+  listen only) has no response by specification, so it stays a counted
+  `orphan_request` and is not attributed. This is the case D13 does not catch:
+  a test pins it, and the README and the report state it plainly.
+- **Corpus:** three fixtures are added to the malformed-input corpus (D4): an
+  FC 08 PDU with too few data bytes, an FC 43 response whose object list
+  overruns the PDU, and an FC 43 request with an unsupported MEI type. The
+  golden signature file is regenerated; the existing fixtures' signatures must
+  stay byte-identical.
+- **Review:** the D12 and D13 amendments change locked sections (class 5 under
+  D7, the D3 parser scope, the D11 record shape). Architect re-review and
+  independent security review per DESIGN.md are PENDING for both; this entry
+  does not record either as done.
+
+**Rationale:** D7 names FC 08 and FC 43 as the recon and DoS signal class 5
+exists for; D12 narrowed the claim until they could be attributed. Parsing only
+the two shapes needed keeps the hostile-input surface small: every new path is
+a bounded length or count check that fails closed to a counted anomaly. Storing
+the sub-function lets the report say which diagnostic was sent. Discarding FC 43
+object values keeps vendor strings, which are packet-derived bytes, out of the
+record and the report. Keeping D12 for unanswered requests means the tool never
+asserts an outcome the capture does not show, at the cost of missing FC 08
+0x0004, which is stated rather than hidden.
+
+**Rejected:** accepting every function code generically (widens the parser to
+shapes nobody validated); storing FC 43 object values (packet-derived strings
+for no detection benefit); checking the FC 08 sub-function echo when pairing
+(changes D11 for one function code); attributing unanswered FC 08 requests in
+this entry (reverses D12; needs its own entry); grouping FC 08 and FC 43 into
+poll groups (no address or quantity to key on, and class 3 does not run yet).
+
+**Revisit:** attributing unanswered FC 08 0x0004 requests; storing FC 43 object
+values if a later class needs them; other MEI types if real captures show them.
+
 ---
 
 ## Standing assumption (not a decision, a boundary)

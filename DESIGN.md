@@ -73,10 +73,12 @@ Each is a heuristic, not a proof of malice. The report says "anomalous," not
    containing **100%** of the device's baseline transactions. Arms only if the
    baseline spans ≥ 72 hours **and** that window covers ≤ 20 of 24 hours;
    otherwise skipped and the skip (with reason) is stated in the report.
-5. **Never-seen function code:** any supported FC (01, 02, 03, 04, 05, 06, 15,
-   16) not present in the device's baseline FC set. FC 08 (diagnostics) and FC 43
-   (device identification) are counted as parse anomalies but not yet attributed
-   to a device, so this class cannot fire on them in v0.1 (D12).
+5. **Never-seen function code:** any supported FC (01, 02, 03, 04, 05, 06, 08,
+   15, 16, and 43 with MEI type 0x0E) not present in the device's baseline FC
+   set. FC 08 (diagnostics) and FC 43 (device identification) are attributed to
+   a device (D13). One case is not caught: FC 08 sub-function 0x0004 (force
+   listen only) gets no response by specification, so it stays an unanswered
+   request (D12), and the report states this limit.
 
 **Write decision tree (classes 1 vs 2):** one write event produces exactly one
 finding: register in the target table's baseline read-set → class 1; register
@@ -182,10 +184,10 @@ Stated here and repeated in the README:
 ## Dependency surface: LOCKED (D3)
 
 **scapy, and nothing else** beyond stdlib. scapy is used solely for pcap I/O and
-ordered TCP payload delivery. The MBAP header and PDU parsing for the eight
-in-scope FCs is hand-rolled (~100 lines against the published spec). Neither
-pyshark (tshark subprocess: external binary, CVE-rich dissector surface, brittle
-CI) nor scapy's contrib Modbus layer is used. No web framework, no database, no ML
+ordered TCP payload delivery. The MBAP header and PDU parsing for the ten
+in-scope FCs (D13) is hand-rolled against the published spec. Neither pyshark
+(tshark subprocess: external binary, CVE-rich dissector surface, brittle CI) nor
+scapy's contrib Modbus layer is used. No web framework, no database, no ML
 library.
 
 ## Gate 1 delivery target (2026-07-09, met)
