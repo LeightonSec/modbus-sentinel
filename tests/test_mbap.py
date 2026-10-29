@@ -2,8 +2,10 @@
 
 Covers FC 01, 02, 03, 04, 05, 06, 15, 16 requests and responses, exception
 responses, pipelined ADUs, frames split across feed() calls, and end-of-stream
-truncation.
+truncation. FC 08 and FC 43 (MEI 0x0E) are covered at the end (D13).
 """
+
+from pathlib import Path
 
 import pytest
 
@@ -166,3 +168,200 @@ def test_anomaly_snippet_is_bounded() -> None:
     out = parser.feed(b"\x00\x01\xde\xad" + b"\xff" * 500)  # bad protocol id, big buffer
     anomalies = [r for r in out if isinstance(r, ParseAnomaly)]
     assert anomalies and all(len(a.snippet) <= 16 for a in anomalies)
+
+
+# --- D13: FC 08 (diagnostics) and FC 43 / MEI 0x0E (read device id) -----------
+
+OVERRUN_FIXTURE = Path(__file__).parent / "corpus" / "fc43_object_overrun.bin"
+OVERRUN_LENGTH_INDEX = 22  # second object's length byte: 7 MBAP bytes + 15 into the PDU
+VENDOR = [(0x00, b"ACME!"), (0x01, b"V1.0")]
+
+
+def run(data: bytes, is_request: bool, chunk: int | None = None) -> list:
+    parser = StreamParser(is_request=is_request)
+    out: list = []
+    if chunk is None:
+        out.extend(parser.feed(data))
+    else:
+        for i in range(0, len(data), chunk):
+            out.extend(parser.feed(data[i : i + chunk]))
+    out.extend(parser.finish())
+    return out
+
+
+def mei_response(objects, count: int | None = None, read_code: int = 1, more_follows: int = 0x00) -> bytes:
+    """FC 43 / MEI 0x0E response PDU: fc, MEI, read code, conformity,
+    more-follows, next object id, object count, then (id, length, value) objects."""
+    pdu = bytes([0x2B, 0x0E, read_code, 0x01, more_follows, 0x00, len(objects) if count is None else count])
+    for obj_id, value in objects:
+        pdu += bytes([obj_id, len(value)]) + value
+    return pdu
+
+
+@pytest.mark.parametrize("is_request", [True, False])
+@pytest.mark.parametrize("subfunction", [0x0000, 0x0004, 0xFFFF])
+def test_fc08_parses_both_directions_any_subfunction(is_request: bool, subfunction: int) -> None:
+    adu = parse_one(bytes([0x08]) + subfunction.to_bytes(2, "big") + b"\xa5\x37", is_request=is_request)
+    assert adu.function_code == 8 and adu.is_request == is_request
+    assert adu.subfunction == subfunction
+    assert (adu.start_address, adu.quantity, adu.value, adu.byte_count) == (None, None, None, None)
+
+
+@pytest.mark.parametrize("is_request", [True, False])
+@pytest.mark.parametrize("data", [b"", b"\x00", b"\x00\x00\x01"])
+def test_fc08_short_or_odd_data_malformed(is_request: bool, data: bytes) -> None:
+    (a,) = run(frame(bytes([0x08]) + data), is_request)
+    assert isinstance(a, ParseAnomaly) and a.kind == "malformed_pdu"
+    assert "want an even count >= 2" in a.detail
+
+
+def test_fc43_read_device_id_request_parses() -> None:
+    adu = parse_one(bytes([0x2B, 0x0E, 0x01, 0x00]), is_request=True)
+    assert adu.function_code == 43 and adu.is_request
+    assert adu.subfunction == 0x0E
+    assert adu.start_address is None and adu.quantity is None
+
+
+@pytest.mark.parametrize(
+    "data,detail",
+    [
+        (b"", "fc 43 request with 0 data bytes (want 3)"),
+        (b"\x0e\x01", "fc 43 request with 2 data bytes (want 3)"),
+        (b"\x0e\x01\x00\x00", "fc 43 request with 4 data bytes (want 3)"),
+        (b"\x0e\x00\x00", "fc 43 request read code 0 outside 1..4"),
+        (b"\x0e\x05\x00", "fc 43 request read code 5 outside 1..4"),
+    ],
+)
+def test_fc43_request_malformed(data: bytes, detail: str) -> None:
+    (a,) = run(frame(bytes([0x2B]) + data), is_request=True)
+    assert isinstance(a, ParseAnomaly) and a.kind == "malformed_pdu"
+    assert a.detail == detail
+
+
+@pytest.mark.parametrize("is_request", [True, False])
+def test_fc43_other_mei_stays_unknown(is_request: bool) -> None:
+    (a,) = run(frame(bytes([0x2B, 0x0D, 0x01, 0x00])), is_request)
+    assert isinstance(a, ParseAnomaly) and a.kind == "unknown_function_code"
+    assert a.detail == "fc 0x2b MEI type 0x0d not supported"
+
+
+def test_fc43_response_parses_and_keeps_no_object_bytes() -> None:
+    adu = parse_one(mei_response(VENDOR), is_request=False)
+    assert adu.function_code == 43 and not adu.is_request
+    assert adu.subfunction == 0x0E
+    assert "ACME" not in repr(adu) and "V1.0" not in repr(adu)
+    assert not any(isinstance(v, (bytes, bytearray, str)) for v in vars(adu).values())
+
+
+def test_fc43_response_more_follows_ff_parses() -> None:
+    adu = parse_one(mei_response(VENDOR, more_follows=0xFF), is_request=False)
+    assert adu.function_code == 43
+
+
+def test_fc43_overrun_fixture_detail_and_no_object_bytes() -> None:
+    """Same bytes as the corpus fixture, response-side. The golden pins kind and
+    offset only, so the detail that names the object walk is pinned here."""
+    (a,) = run(OVERRUN_FIXTURE.read_bytes(), is_request=False)
+    assert isinstance(a, ParseAnomaly) and a.kind == "malformed_pdu"
+    assert a.detail == "fc 43 response object list overruns pdu"
+    assert len(a.snippet) == 7 and b"ACME" not in a.snippet  # header only
+
+
+def test_fc43_overrun_fixture_with_correct_length_parses() -> None:
+    """The fixture with its second object's length corrected from 9 to 4 parses,
+    so the overrun is the only thing wrong with it."""
+    data = bytearray(OVERRUN_FIXTURE.read_bytes())
+    assert data[OVERRUN_LENGTH_INDEX] == 9 and bytes(data[OVERRUN_LENGTH_INDEX + 1 :]) == b"V1.0"
+    data[OVERRUN_LENGTH_INDEX] = 4
+    (adu,) = run(bytes(data), is_request=False)
+    assert isinstance(adu, ParsedADU) and adu.function_code == 43
+
+
+@pytest.mark.parametrize(
+    "pdu,detail",
+    [
+        (mei_response(VENDOR) + b"\x00", "fc 43 response object list leaves 1 trailing bytes"),
+        (mei_response(VENDOR, count=1), "fc 43 response object list leaves 6 trailing bytes"),
+        (mei_response(VENDOR, count=3), "fc 43 response object list overruns pdu"),
+        (mei_response(VENDOR, count=3) + b"\x02", "fc 43 response object list overruns pdu"),
+    ],
+)
+def test_fc43_response_object_list_checks(pdu: bytes, detail: str) -> None:
+    (a,) = run(frame(pdu), is_request=False)
+    assert isinstance(a, ParseAnomaly) and a.kind == "malformed_pdu"
+    assert a.detail == detail
+    assert b"ACME" not in a.snippet
+
+
+@pytest.mark.parametrize(
+    "pdu,detail",
+    [
+        (bytes([0x2B]), "fc 43 response with 0 data bytes (want >= 6)"),
+        (bytes([0x2B, 0x0E, 0x01, 0x01, 0x00, 0x00]), "fc 43 response with 5 data bytes (want >= 6)"),
+        (mei_response(VENDOR, read_code=0), "fc 43 response read code 0 outside 1..4"),
+        (mei_response(VENDOR, more_follows=0x7F), "fc 43 response more-follows 0x7f not 0x00 or 0xff"),
+    ],
+)
+def test_fc43_response_header_checks_malformed(pdu: bytes, detail: str) -> None:
+    (a,) = run(frame(pdu), is_request=False)
+    assert isinstance(a, ParseAnomaly) and a.kind == "malformed_pdu"
+    assert a.detail == detail
+    assert b"ACME" not in a.snippet
+
+
+@pytest.mark.parametrize("fc", [0x88, 0xAB])
+def test_request_side_exception_bit_on_new_fcs_not_laundered(fc: int) -> None:
+    (a,) = run(frame(bytes([fc, 0x01])), is_request=True)
+    assert isinstance(a, ParseAnomaly) and a.kind == "unknown_function_code"
+    assert f"{fc:#04x}" in a.detail
+
+
+@pytest.mark.parametrize("fc,base", [(0x88, 8), (0xAB, 43)])
+def test_exception_response_for_new_fcs(fc: int, base: int) -> None:
+    adu = parse_one(bytes([fc, 0x01]), is_request=False)
+    assert adu.is_exception and adu.function_code == base
+    assert adu.exception_code == 1
+    assert adu.subfunction is None
+
+
+@pytest.mark.parametrize("is_request", [True, False])
+@pytest.mark.parametrize("fc", [0x07, 0x11, 0x17, 0x2A])
+def test_other_fcs_still_unknown(fc: int, is_request: bool) -> None:
+    (a,) = run(frame(bytes([fc, 0x00, 0x00])), is_request)
+    assert isinstance(a, ParseAnomaly) and a.kind == "unknown_function_code"
+
+
+def test_new_fcs_chunking_deterministic() -> None:
+    cases = [
+        (frame(bytes([0x08, 0x00, 0x00, 0xA5, 0x37])), True),
+        (frame(bytes([0x2B, 0x0E, 0x01, 0x00])), True),
+        (frame(mei_response(VENDOR)), False),
+        (frame(mei_response(VENDOR, count=3)), False),
+        (OVERRUN_FIXTURE.read_bytes(), False),
+    ]
+    for data, is_request in cases:
+        assert run(data, is_request) == run(data, is_request, chunk=1)
+
+
+def test_existing_fcs_have_no_subfunction() -> None:
+    adu = parse_one(bytes([3]) + (0).to_bytes(2, "big") + (1).to_bytes(2, "big"), is_request=True)
+    assert adu.subfunction is None
+
+
+def test_fc43_object_length_overshoot_by_one_overruns() -> None:
+    """Boundary: the last object's declared length raised by exactly 1 (4 -> 5),
+    value bytes unchanged, must overrun rather than read one byte past the PDU."""
+    pdu = bytearray(mei_response(VENDOR))
+    last_length_index = 7 + 2 + len(b"ACME!") + 1  # header, first object, last object's id
+    assert pdu[last_length_index] == 4 and bytes(pdu[last_length_index + 1 :]) == b"V1.0"
+    pdu[last_length_index] = 5
+    (a,) = run(frame(bytes(pdu)), is_request=False)
+    assert isinstance(a, ParseAnomaly) and a.kind == "malformed_pdu"
+    assert a.detail == "fc 43 response object list overruns pdu"
+
+
+def test_fc43_response_zero_objects_parses() -> None:
+    pdu = mei_response([])
+    assert len(pdu) - 1 == 6 and pdu[6] == 0  # exactly 6 data bytes, object count 0
+    adu = parse_one(pdu, is_request=False)
+    assert adu.function_code == 43 and adu.subfunction == 0x0E

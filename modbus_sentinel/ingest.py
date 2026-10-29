@@ -77,6 +77,7 @@ class TransactionRecord:
     start_address: int | None
     quantity: int | None
     value: int | None
+    subfunction: int | None = None  # D13: FC 08 sub-function, FC 43 MEI type
 
 
 @dataclass(frozen=True)
@@ -291,6 +292,7 @@ class _Incarnation:
                 start_address=request.start_address,
                 quantity=request.quantity,
                 value=request.value,
+                subfunction=request.subfunction,
             )
         )
 

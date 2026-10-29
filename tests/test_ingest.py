@@ -322,3 +322,67 @@ def test_non_tcp_packets_tallied(tmp_path: Path) -> None:
     result = ingest_pcap(str(path))
     assert result.packets_non_tcp == 1
     assert len(result.records) == 1
+
+
+# --- D13: FC 08 and FC 43 pair into address-less records ------------------------
+
+FC08_QUERY = b"\x08\x00\x00\xa5\x37"  # sub-function 0x0000 (return query data), echoed back
+FC43_REQ = b"\x2b\x0e\x01\x00"  # MEI 0x0E, read code 1, object id 0
+FC43_RESP = b"\x2b\x0e\x01\x01\x00\x00\x02" + b"\x00\x05ACME!" + b"\x01\x04V1.0"
+
+
+def test_fc08_pairs_to_addressless_record(tmp_path: Path) -> None:
+    c = Conn()
+    c.send(frame(1, 1, FC08_QUERY))
+    c.recv(frame(1, 1, FC08_QUERY))
+    result = ingest(tmp_path, c)
+    assert result.anomalies == []
+    (rec,) = result.records
+    assert rec.function_code == 8 and rec.subfunction == 0x0000
+    assert (rec.start_address, rec.quantity, rec.value) == (None, None, None)
+    assert not rec.is_write and not rec.is_exception
+
+
+def test_fc43_pairs_to_addressless_record(tmp_path: Path) -> None:
+    c = Conn()
+    c.send(frame(1, 1, FC43_REQ))
+    c.recv(frame(1, 1, FC43_RESP))
+    result = ingest(tmp_path, c)
+    assert result.anomalies == []
+    (rec,) = result.records
+    assert rec.function_code == 43 and rec.subfunction == 0x0E
+    assert (rec.start_address, rec.quantity, rec.value) == (None, None, None)
+    assert "ACME" not in repr(rec) and "V1.0" not in repr(rec)  # object values discarded (D13)
+
+
+def test_fc08_exception_response_pairs(tmp_path: Path) -> None:
+    c = Conn()
+    c.send(frame(1, 1, FC08_QUERY))
+    c.recv(frame(1, 1, b"\x88\x01"))  # illegal function
+    result = ingest(tmp_path, c)
+    assert result.anomalies == []
+    (rec,) = result.records
+    assert rec.function_code == 8 and rec.is_exception
+    assert rec.exception_code == 1
+    assert rec.subfunction == 0x0000  # from the request
+
+
+def test_fc08_force_listen_only_unanswered_is_orphan(tmp_path: Path) -> None:
+    """D13 limit, pinned (D12 unchanged): FC 08 sub-function 0x0004 (force listen
+    only) gets no response by specification, so it stays an orphan_request and
+    never becomes a record. The orphan_request detail does not carry the function
+    code, so this test relies on the capture holding only that one request:
+    exactly one orphan_request and zero records can only have come from it."""
+    c = Conn()
+    c.send(frame(1, 1, b"\x08\x00\x04\x00\x00"))
+    result = ingest(tmp_path, c)
+    assert result.records == []
+    assert result.anomaly_counts() == {"orphan_request": 1}
+
+
+def test_existing_record_has_no_subfunction(tmp_path: Path) -> None:
+    c = Conn()
+    c.send(read_req(tid=1))
+    c.recv(read_resp(tid=1))
+    (rec,) = ingest(tmp_path, c).records
+    assert rec.subfunction is None

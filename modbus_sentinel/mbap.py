@@ -16,6 +16,13 @@ policy) and keeps progress linear. Recovery is best-effort: a skip can land
 mid-frame and cascade into further counted skips until framing realigns; every
 skipped byte is counted, never silent. A malformed PDU inside a *well-framed*
 ADU costs only that ADU.
+
+FC 08 (diagnostics) and FC 43 with MEI type 0x0E (read device identification)
+are parsed as address-less PDUs (D13). Their branches sit at the top of the
+request and response parsers so they can never fall through to the FC 15/16
+shape. FC 43 response object values are walked for bounds and discarded: they
+are never stored on a ParsedADU, and anomaly snippets for FC 43 responses stop
+at the 7-byte header so object bytes are never returned either.
 """
 
 from dataclasses import dataclass
@@ -28,7 +35,14 @@ MBAP_LENGTH_MAX = 254
 READ_FCS = frozenset({1, 2, 3, 4})
 WRITE_SINGLE_FCS = frozenset({5, 6})
 WRITE_MULTI_FCS = frozenset({15, 16})
-SUPPORTED_FCS = READ_FCS | WRITE_SINGLE_FCS | WRITE_MULTI_FCS
+DIAGNOSTIC_FC = 8  # D13
+MEI_FC = 43  # D13: only MEI type 0x0E is parsed
+MEI_READ_DEVICE_ID = 0x0E
+SUPPORTED_FCS = READ_FCS | WRITE_SINGLE_FCS | WRITE_MULTI_FCS | frozenset({DIAGNOSTIC_FC, MEI_FC})
+
+# FC 43 response header: fc, MEI type, read code, conformity, more-follows,
+# next object id, object count. Object bytes start after it.
+_MEI_RESPONSE_HEADER_LEN = 7
 
 # Spec maxima for quantity fields (Modbus Application Protocol V1.1b3).
 _MAX_QUANTITY = {1: 2000, 2: 2000, 3: 125, 4: 125, 15: 1968, 16: 123}
@@ -52,6 +66,7 @@ class ParsedADU:
     quantity: int | None = None
     value: int | None = None
     byte_count: int | None = None
+    subfunction: int | None = None  # D13: FC 08 sub-function, FC 43 MEI type
 
 
 @dataclass(frozen=True)
@@ -178,9 +193,96 @@ class StreamParser:
             return self._parse_request(transaction_id, unit_id, function_code, data, pdu)
         return self._parse_response(transaction_id, unit_id, function_code, data, pdu)
 
+    def _parse_diagnostic(
+        self, transaction_id: int, unit_id: int, data: bytes, pdu: bytes
+    ) -> ParsedADU | ParseAnomaly:
+        """FC 08, both directions (D13): sub-function (2 bytes) plus data in
+        2-byte words. Any sub-function value is accepted: a bogus one is signal."""
+        if len(data) < 2 or len(data) % 2:
+            side = "request" if self.is_request else "response"
+            return self._pdu_anomaly(
+                f"fc 8 {side} with {len(data)} data bytes (want an even count >= 2)", pdu
+            )
+        return ParsedADU(
+            transaction_id=transaction_id,
+            unit_id=unit_id,
+            function_code=DIAGNOSTIC_FC,
+            is_request=self.is_request,
+            subfunction=int.from_bytes(data[0:2], "big"),
+        )
+
+    def _unknown_mei(self, mei_type: int, pdu: bytes) -> ParseAnomaly:
+        return ParseAnomaly(
+            kind="unknown_function_code",
+            detail=f"fc 0x2b MEI type {mei_type:#04x} not supported",
+            offset=self._offset,
+            snippet=pdu[:_MEI_RESPONSE_HEADER_LEN],
+        )
+
+    def _parse_mei_request(
+        self, transaction_id: int, unit_id: int, data: bytes, pdu: bytes
+    ) -> ParsedADU | ParseAnomaly:
+        """FC 43 request (D13): MEI 0x0E, read code 1..4, object id."""
+        if not data:
+            return self._pdu_anomaly("fc 43 request with 0 data bytes (want 3)", pdu)
+        if data[0] != MEI_READ_DEVICE_ID:
+            return self._unknown_mei(data[0], pdu)
+        if len(data) != 3:
+            return self._pdu_anomaly(f"fc 43 request with {len(data)} data bytes (want 3)", pdu)
+        if not 1 <= data[1] <= 4:
+            return self._pdu_anomaly(f"fc 43 request read code {data[1]} outside 1..4", pdu)
+        return ParsedADU(
+            transaction_id=transaction_id,
+            unit_id=unit_id,
+            function_code=MEI_FC,
+            is_request=True,
+            subfunction=MEI_READ_DEVICE_ID,
+        )
+
+    def _parse_mei_response(
+        self, transaction_id: int, unit_id: int, data: bytes, pdu: bytes
+    ) -> ParsedADU | ParseAnomaly:
+        """FC 43 response (D13). The object list is walked with a bounds check at
+        every step and must consume the PDU exactly; object values are discarded.
+        Every anomaly snippet stops at the header, so no object byte is returned."""
+        header = pdu[:_MEI_RESPONSE_HEADER_LEN]
+        if not data:
+            return self._pdu_anomaly("fc 43 response with 0 data bytes (want >= 6)", header)
+        if data[0] != MEI_READ_DEVICE_ID:
+            return self._unknown_mei(data[0], pdu)
+        if len(data) < 6:
+            return self._pdu_anomaly(f"fc 43 response with {len(data)} data bytes (want >= 6)", header)
+        if not 1 <= data[1] <= 4:
+            return self._pdu_anomaly(f"fc 43 response read code {data[1]} outside 1..4", header)
+        if data[3] not in (0x00, 0xFF):
+            return self._pdu_anomaly(f"fc 43 response more-follows {data[3]:#04x} not 0x00 or 0xff", header)
+        pos = 6  # first object: id (1), length (1), value (length)
+        for _ in range(data[5]):
+            if pos + 2 > len(data):  # id and length bytes must be present
+                return self._pdu_anomaly("fc 43 response object list overruns pdu", header)
+            pos += 2 + data[pos + 1]
+            if pos > len(data):  # value bytes must be present
+                return self._pdu_anomaly("fc 43 response object list overruns pdu", header)
+        if pos != len(data):
+            return self._pdu_anomaly(
+                f"fc 43 response object list leaves {len(data) - pos} trailing bytes", header
+            )
+        return ParsedADU(
+            transaction_id=transaction_id,
+            unit_id=unit_id,
+            function_code=MEI_FC,
+            is_request=False,
+            subfunction=MEI_READ_DEVICE_ID,
+        )
+
     def _parse_request(
         self, transaction_id: int, unit_id: int, fc: int, data: bytes, pdu: bytes
     ) -> ParsedADU | ParseAnomaly:
+        # D13 branches first: they must never fall through to the FC 15/16 shape.
+        if fc == DIAGNOSTIC_FC:
+            return self._parse_diagnostic(transaction_id, unit_id, data, pdu)
+        if fc == MEI_FC:
+            return self._parse_mei_request(transaction_id, unit_id, data, pdu)
         if fc in READ_FCS:
             if len(data) != 4:
                 return self._pdu_anomaly(f"fc {fc} request with {len(data)} data bytes (want 4)", pdu)
@@ -235,6 +337,11 @@ class StreamParser:
     def _parse_response(
         self, transaction_id: int, unit_id: int, fc: int, data: bytes, pdu: bytes
     ) -> ParsedADU | ParseAnomaly:
+        # D13 branches first: they must never fall through to the FC 15/16 shape.
+        if fc == DIAGNOSTIC_FC:
+            return self._parse_diagnostic(transaction_id, unit_id, data, pdu)
+        if fc == MEI_FC:
+            return self._parse_mei_response(transaction_id, unit_id, data, pdu)
         if fc in READ_FCS:
             if not data or data[0] != len(data) - 1:
                 got = data[0] if data else "none"
