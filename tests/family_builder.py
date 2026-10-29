@@ -26,6 +26,21 @@ def fc05(tid: int, unit: int, addr: int) -> bytes:
     return frame(tid, unit, b"\x05" + addr.to_bytes(2, "big") + b"\xff\x00")
 
 
+def fc08(tid: int, unit: int, subfunction: int = 0x0000) -> bytes:
+    """FC 08 diagnostics, sub-function plus one data word; the echo is identical."""
+    return frame(tid, unit, b"\x08" + subfunction.to_bytes(2, "big") + b"\x00\x00")
+
+
+def fc43_req(tid: int, unit: int) -> bytes:
+    """FC 43 / MEI 0x0E read device id request: read code 1, object id 0."""
+    return frame(tid, unit, b"\x2b\x0e\x01\x00")
+
+
+def fc43_resp(tid: int, unit: int) -> bytes:
+    """FC 43 / MEI 0x0E response with one object; the value is discarded (D13)."""
+    return frame(tid, unit, b"\x2b\x0e\x01\x01\x00\x00\x01" + b"\x00\x04ACME")
+
+
 def _every(period: float, offset: float, req: Builder, resp: Builder) -> list[Event]:
     out = []
     i = 0

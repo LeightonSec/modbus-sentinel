@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
-from family_builder import END, T0, UNTIL, write_family_pcap
+from family_builder import END, T0, UNTIL, fc08, write_family_pcap
 from pcap_builder import read_req, read_resp, write_single_req
 
 from modbus_sentinel import __version__
@@ -136,3 +136,16 @@ def test_unbaselined_device_does_not_change_exit_code(tmp_path: Path, capsys) ->
     out = capsys.readouterr().out
     assert "not analysed: no baseline for these devices" in out
     assert "device 192.168.1.20 unit 3" in out
+
+
+def test_fc08_on_known_device_exit_1_class_5(tmp_path: Path, capsys) -> None:
+    """D13 end to end: an FC 08 diagnostics transaction on unit 1, which never
+    used FC 08 in the baseline, is a class 5 finding, not a rejected record."""
+    inject = [(T0 + 150.3, lambda t: fc08(t, 1, 0x0001), lambda t: fc08(t, 1, 0x0001))]
+    rc = main([family(tmp_path, inject), "--baseline-until", UNTIL_ARG])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "  findings: 1" in out
+    assert "class 5 never-seen function code" in out
+    assert "FC 08 diagnostics, sub-function 0x0001" in out
+    assert "rejected: malformed, not analysed" not in out

@@ -37,6 +37,8 @@ INPUT = "input_registers"
 TABLES = (COILS, DISCRETE_INPUTS, HOLDING, INPUT)
 READ_TABLE = {1: COILS, 2: DISCRETE_INPUTS, 3: HOLDING, 4: INPUT}  # D12
 WRITE_TABLE = {5: COILS, 15: COILS, 6: HOLDING, 16: HOLDING}  # D12
+# D13: no address range, no table; they count toward the FC set only.
+ADDRESSLESS_FCS = frozenset({8, 43})
 _READ_ONLY = frozenset({DISCRETE_INPUTS, INPUT})
 _TABLE_LABEL = {
     COILS: "coils",
@@ -53,6 +55,8 @@ _FC_NAME = {
     6: "write single register",
     15: "write multiple coils",
     16: "write multiple registers",
+    8: "diagnostics",
+    43: "read device identification",
 }
 
 DeviceKey = tuple[str, int]  # (server IP, unit ID), D1
@@ -174,8 +178,11 @@ def split_records(
     )
 
 
-def record_range(r: TransactionRecord) -> tuple[int, int]:
-    """Inclusive address range a request covers (D12); FC 05/06 cover one."""
+def record_range(r: TransactionRecord) -> tuple[int, int] | None:
+    """Inclusive address range a request covers (D12); FC 05/06 cover one.
+    None for the address-less FC 08 and FC 43 (D13)."""
+    if r.function_code in ADDRESSLESS_FCS:
+        return None
     qty = 1 if r.function_code in (5, 6) else r.quantity
     return r.start_address, r.start_address + qty - 1
 
@@ -185,13 +192,15 @@ def _where(r: TransactionRecord) -> str:
 
 
 def validate_record(r: TransactionRecord) -> None:
-    """Shared by baseline and detection: supported FCs only (D12), and an
-    address range past 65535 is malformed Modbus and raises (A12)."""
-    if r.function_code not in READ_TABLE and r.function_code not in WRITE_TABLE:
-        raise ValueError(f"{_where(r)}: unsupported function code {r.function_code:02d}")
-    start, end = record_range(r)
-    if end > MAX_ADDRESS:
-        raise ValueError(f"{_where(r)}: address range {start}-{end} exceeds 65535 (malformed Modbus address)")
+    """Shared by baseline and detection: supported FCs only (D12, D13), and an
+    address range past 65535 is malformed Modbus and raises (A12). Address-less
+    FCs have no range to check."""
+    fc = r.function_code
+    if fc not in READ_TABLE and fc not in WRITE_TABLE and fc not in ADDRESSLESS_FCS:
+        raise ValueError(f"{_where(r)}: unsupported function code {fc:02d}")
+    rng = record_range(r)
+    if rng is not None and rng[1] > MAX_ADDRESS:
+        raise ValueError(f"{_where(r)}: address range {rng[0]}-{rng[1]} exceeds 65535 (malformed Modbus address)")
 
 
 def _check_record(r: TransactionRecord, until: float) -> None:
@@ -203,6 +212,8 @@ def _check_record(r: TransactionRecord, until: float) -> None:
 def _poll_groups(recs: list[TransactionRecord]) -> tuple[PollGroup, ...]:
     groups: dict[tuple[int, int, int], list[float]] = {}
     for r in recs:
+        if r.function_code in ADDRESSLESS_FCS:
+            continue  # D13: no address or quantity to key a poll group on
         start, end = record_range(r)
         groups.setdefault((r.function_code, start, end - start + 1), []).append(r.request_ts)
     out = []
@@ -250,6 +261,8 @@ def _build_device(key: DeviceKey, recs: list[TransactionRecord]) -> DeviceBaseli
         t: ([], []) for t in TABLES
     }
     for r in normal:
+        if r.function_code in ADDRESSLESS_FCS:
+            continue  # D13: in the FC set below, in no per-table set
         if r.function_code in WRITE_TABLE:
             ranges[WRITE_TABLE[r.function_code]][1].append(record_range(r))
         else:

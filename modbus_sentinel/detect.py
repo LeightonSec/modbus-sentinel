@@ -57,11 +57,12 @@ class WhatHappened:
     server_ip: str
     unit_id: int
     function_code: int
-    table: str
-    start_address: int
-    end_address: int  # equal to start_address for FC 05/06
+    table: str | None  # None for the address-less FC 08 and FC 43 (D13)
+    start_address: int | None  # None for FC 08 and FC 43
+    end_address: int | None  # equal to start_address for FC 05/06; None for FC 08/43
     value: int | None  # FC 05/06 written value, else None
     exception_code: int | None  # set when the device answered with an exception
+    subfunction: int | None = None  # D13: FC 08 sub-function, FC 43 MEI type
 
 
 @dataclass(frozen=True)
@@ -158,18 +159,18 @@ def _evaluate(r: TransactionRecord, dev: DeviceBaseline) -> Finding | None:
         note = f"; the device answered with exception code {r.exception_code}"
         reasons = [replace(x, explanation=x.explanation + note) for x in reasons]
     reasons.sort(key=lambda x: x.anomaly_class)
-    start, end = record_range(r)
-    table = WRITE_TABLE.get(r.function_code) or READ_TABLE[r.function_code]
+    rng = record_range(r)  # None for FC 08/43 (D13)
     what = WhatHappened(
         request_ts=r.request_ts,
         server_ip=r.server_ip,
         unit_id=r.unit_id,
         function_code=r.function_code,
-        table=table,
-        start_address=start,
-        end_address=end,
+        table=WRITE_TABLE.get(r.function_code) or READ_TABLE.get(r.function_code),
+        start_address=rng[0] if rng else None,
+        end_address=rng[1] if rng else None,
         value=r.value,
         exception_code=r.exception_code,
+        subfunction=r.subfunction,
     )
     return Finding(what, tuple(reasons))
 
@@ -207,12 +208,14 @@ def detect(baseline: Baseline, records: Iterable[TransactionRecord]) -> Detectio
         finding = _evaluate(r, dev)
         if finding is not None:
             findings.append(finding)
+    # The last key element is -1 for address-less findings, never None, so no
+    # comparison can ever pit None against an int (D13).
     findings.sort(
         key=lambda f: (
             f.what.request_ts,
             _device_order((f.what.server_ip, f.what.unit_id)),
             f.what.function_code,
-            f.what.start_address,
+            -1 if f.what.start_address is None else f.what.start_address,
         )
     )
     unbaselined = tuple(

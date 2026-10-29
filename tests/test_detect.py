@@ -11,7 +11,7 @@ import random
 from pathlib import Path
 
 import pytest
-from family_builder import T0, UNTIL, Event, family_events
+from family_builder import T0, UNTIL, Event, family_events, fc08, fc43_req, fc43_resp
 from pcap_builder import (
     SERVER,
     Conn,
@@ -251,8 +251,8 @@ def test_detect_rejects_address_past_65535() -> None:
 
 
 def test_detect_rejects_unsupported_fc() -> None:
-    with pytest.raises(ValueError, match="unsupported function code 08"):
-        detect(small_baseline(), [rec(AT, fc=8)])
+    with pytest.raises(ValueError, match="unsupported function code 07"):
+        detect(small_baseline(), [rec(AT, fc=7)])
 
 
 # --- D12 pin: unanswered writes are invisible ------------------------------------------------
@@ -307,3 +307,67 @@ def test_empty_detection_period() -> None:
     assert res.findings == () and res.unbaselined == ()
     assert res.records_analysed == 0
     assert res.until == UNTIL
+
+
+# --- D13: FC 08 and FC 43 (address-less, class 5 only) ---------------------------
+
+
+def test_fc08_on_known_device_is_class_5_only(tmp_path: Path) -> None:
+    inject = [(T0 + 150.3, lambda t: fc08(t, 1, 0x0001), lambda t: fc08(t, 1, 0x0001))]
+    _, res = run_family(tmp_path, inject)
+    (f,) = res.findings
+    assert f.classes == (5,)
+    assert f.what.function_code == 8 and f.what.subfunction == 0x0001
+    assert (f.what.table, f.what.start_address, f.what.end_address) == (None, None, None)
+
+
+def test_fc43_on_known_device_is_class_5_only(tmp_path: Path) -> None:
+    inject = [(T0 + 150.3, lambda t: fc43_req(t, 1), lambda t: fc43_resp(t, 1))]
+    _, res = run_family(tmp_path, inject)
+    (f,) = res.findings
+    assert f.classes == (5,)
+    assert f.what.function_code == 43 and f.what.subfunction == 0x0E
+    assert (f.what.table, f.what.start_address, f.what.end_address) == (None, None, None)
+
+
+def test_fc08_already_in_baseline_not_flagged() -> None:
+    base = build_baseline([rec(T0, fc=3), rec(T0 + 1, fc=8, subfunction=0x0000)], UNTIL)
+    res = detect(base, [rec(AT, fc=8, subfunction=0x000A)])
+    assert res.findings == ()
+    assert res.records_analysed == 1
+
+
+def test_fc08_exception_answered_still_class_5() -> None:
+    (f,) = detect(small_baseline(), [rec(AT, fc=8, subfunction=0x0001, exc=1)]).findings
+    assert f.classes == (5,)
+    assert f.what.exception_code == 1
+    assert "the device answered with exception code 1" in f.why[0].explanation
+
+
+def test_addressless_never_classes_1_or_2() -> None:
+    cases = [(8, 0x0000, None), (8, 0x0004, 1), (43, 0x0E, None), (43, 0x0E, 2)]
+    recs = [rec(AT + i, fc=fc, subfunction=sub, exc=exc) for i, (fc, sub, exc) in enumerate(cases)]
+    findings = detect(small_baseline(), recs).findings
+    assert len(findings) == 4
+    assert all(f.classes == (5,) for f in findings)
+
+
+def test_same_timestamp_addressless_and_addressed_sort_without_error() -> None:
+    """Address-less findings (start_address None) and addressed ones at the SAME
+    timestamp on the same device. The sort key uses -1 for a missing start, so no
+    comparison pits None against an int; order is by function code, then start."""
+    recs = [
+        rec(AT, fc=43, subfunction=0x0E),
+        rec(AT, fc=6, start=900),
+        rec(AT, fc=8, subfunction=0x0001),
+        rec(AT, fc=6, start=105),
+        rec(AT, fc=8, subfunction=0x0002),
+    ]
+    findings = detect(small_baseline(), recs).findings
+    assert [(f.what.function_code, f.what.start_address) for f in findings] == [
+        (6, 105),
+        (6, 900),
+        (8, None),
+        (8, None),
+        (43, None),
+    ]

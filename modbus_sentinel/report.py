@@ -93,18 +93,42 @@ def coverage_gaps(ingest: IngestResult, detection: DetectionResult) -> list[str]
         f"classes not implemented: {not_implemented}",
         "unanswered or superseded requests are not analysed: "
         f"{counts.get('orphan_request', 0)} orphan requests counted",
-        "function codes outside the supported set (including FC 08 and FC 43) are counted, "
-        f"not attributed to a device: {counts.get('unknown_function_code', 0)}",
+        "function codes outside the supported set are counted, not attributed to a "
+        f"device: {counts.get('unknown_function_code', 0)}",
         f"streams not parsed (direction unknown or conflicting): {unparsed}",
+        FORCE_LISTEN_ONLY_LIMIT,
     ]
+
+
+# D13 fixed limit statement. It carries no count: orphan_request details hold no
+# function code, so how many unanswered FC 08 0x0004 requests a capture holds is
+# not known.
+FORCE_LISTEN_ONLY_LIMIT = (
+    "FC 08 sub-function 0x0004 (force listen only) gets no response by "
+    "specification, so an unanswered one is counted as an orphan request and is "
+    "not attributed to a device; class 5 cannot see it"
+)
+
+
+def _hex(value: int | None, digits: int) -> str:
+    return "unknown" if value is None else f"0x{value:0{digits}x}"
+
+
+def _target(w) -> str:
+    """What the transaction touched: a sub-function for FC 08, the MEI type for
+    FC 43 (D13), otherwise the table and address range."""
+    if w.function_code == 8:
+        return f"sub-function {_hex(w.subfunction, 4)}"
+    if w.function_code == 43:
+        return f"MEI type {_hex(w.subfunction, 2)}"
+    return f"{_TABLE_LABEL[w.table]} {_addresses(w.start_address, w.end_address)}"
 
 
 def _what(f: Finding) -> str:
     w = f.what
     text = (
         f"{_ts(w.request_ts)} {w.server_ip} unit {w.unit_id} FC {w.function_code:02d} "
-        f"{_FC_NAME[w.function_code]}, {_TABLE_LABEL[w.table]} "
-        f"{_addresses(w.start_address, w.end_address)}"
+        f"{_FC_NAME[w.function_code]}, {_target(w)}"
     )
     if w.value is not None:
         text += f", value {w.value}"

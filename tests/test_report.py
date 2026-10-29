@@ -16,6 +16,7 @@ from modbus_sentinel.detect import detect
 from modbus_sentinel.ingest import IngestAnomaly, IngestResult
 from modbus_sentinel.report import (
     ANOMALY_DETAIL_CAP,
+    FORCE_LISTEN_ONLY_LIMIT,
     RejectedRecord,
     dumps_json,
     hexdump,
@@ -131,8 +132,15 @@ def test_coverage_gaps_stated() -> None:
     out = render(anomalies=anomalies)
     assert "classes not implemented: 3 (polling-interval break), 4 (off-hours activity)" in out
     assert "unanswered or superseded requests are not analysed: 2 orphan requests counted" in out
-    assert "(including FC 08 and FC 43) are counted, not attributed to a device: 1" in out
+    assert "function codes outside the supported set are counted, not attributed to a device: 1" in out
+    assert "including FC 08 and FC 43" not in out
     assert "streams not parsed (direction unknown or conflicting): 2" in out
+    # D13 fixed limit statement: present verbatim, and it carries no count
+    assert (
+        "  FC 08 sub-function 0x0004 (force listen only) gets no response by specification, "
+        "so an unanswered one is counted as an orphan request and is not attributed to a "
+        "device; class 5 cannot see it\n"
+    ) in out
 
 
 def test_unbaselined_device_listed_not_analysed() -> None:
@@ -246,3 +254,55 @@ def test_hexdump_and_safe_text_units() -> None:
     assert safe_text(chr(0x2014)) == "\\u2014"
     assert safe_text(chr(0x1F600)) == "\\U0001f600"
     assert safe_text("\\") == "\\\\"
+
+
+# --- D13: FC 08 and FC 43 in the report -------------------------------------------
+
+
+def test_what_happened_fc08_fc43_show_subfunction_no_table() -> None:
+    out = render(det=[rec(AT, fc=8, subfunction=0x000A), rec(AT + 1, fc=43, subfunction=0x0E)])
+    whats = [ln for ln in out.splitlines() if ln.startswith("    what happened:")]
+    assert len(whats) == 2
+    assert whats[0].endswith("unit 1 FC 08 diagnostics, sub-function 0x000a")  # 4 hex digits, lowercase
+    assert whats[1].endswith("unit 1 FC 43 read device identification, MEI type 0x0e")
+    for line in whats:
+        assert "registers" not in line and "coils" not in line and "discrete" not in line
+    assert out.count("class 5 never-seen function code") == 2
+
+
+def test_json_fc08_null_table_and_addresses() -> None:
+    data = json.loads(report_json(det=[rec(AT, fc=8, subfunction=0x0001)]))
+    assert data["schema_version"] == 1
+    (f,) = data["detection"]["findings"]
+    what = f["what"]
+    assert (what["table"], what["start_address"], what["end_address"]) == (None, None, None)
+    assert what["subfunction"] == 1 and what["function_code"] == 8
+    assert [r["anomaly_class"] for r in f["why"]] == [5]
+
+
+LIMIT_LINE = (
+    "  FC 08 sub-function 0x0004 (force listen only) gets no response by specification, "
+    "so an unanswered one is counted as an orphan request and is not attributed to a "
+    "device; class 5 cannot see it"
+)
+
+
+def test_force_listen_only_limit_independent_of_count() -> None:
+    """The D13 limit sentence is fixed text: the same line, verbatim, whether the
+    capture holds zero orphan requests or five. It never carries a count."""
+    renders = [render(anomalies=[]), render(anomalies=[anomaly(kind="orphan_request") for _ in range(5)])]
+    limit_lines = [[ln for ln in out.splitlines() if "force listen only" in ln] for out in renders]
+    assert limit_lines[0] == [LIMIT_LINE]
+    assert limit_lines[1] == [LIMIT_LINE]
+    assert limit_lines[0] == limit_lines[1]
+    assert LIMIT_LINE == "  " + FORCE_LISTEN_ONLY_LIMIT
+
+
+def test_unknown_subfunction_renders_unknown() -> None:
+    """A finding whose WhatHappened has no subfunction (hand-built record; ingest
+    always sets it for FC 08/43) renders "unknown" rather than failing."""
+    out = render(det=[rec(AT, fc=8, subfunction=None), rec(AT + 1, fc=43, subfunction=None)])
+    whats = [ln for ln in out.splitlines() if ln.startswith("    what happened:")]
+    assert len(whats) == 2
+    assert whats[0].endswith("FC 08 diagnostics, sub-function unknown")
+    assert whats[1].endswith("FC 43 read device identification, MEI type unknown")

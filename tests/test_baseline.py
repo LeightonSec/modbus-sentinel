@@ -32,12 +32,15 @@ from modbus_sentinel.baseline import (
     DISCRETE_INPUTS,
     HOLDING,
     INPUT,
+    SCHEMA_VERSION,
+    TABLES,
     build_baseline,
     from_dict,
     parse_until,
     render_text,
     split_records,
     to_dict,
+    validate_record,
 )
 from modbus_sentinel.ingest import IngestResult, TransactionRecord, ingest_pcap
 
@@ -182,8 +185,8 @@ def test_build_rejects_address_past_65535() -> None:
 
 
 def test_build_rejects_unsupported_fc() -> None:
-    with pytest.raises(ValueError, match="unsupported function code 08"):
-        build_baseline([rec(T0, fc=8)], FAR_UNTIL)
+    with pytest.raises(ValueError, match="unsupported function code 07"):
+        build_baseline([rec(T0, fc=7)], FAR_UNTIL)
 
 
 def test_build_rejects_record_not_before_until() -> None:
@@ -378,3 +381,45 @@ def test_deterministic_and_order_independent() -> None:
 def test_render_text_golden() -> None:
     rendered = render_text(build_baseline(golden_records(), GOLDEN_UNTIL))
     assert rendered == GOLDEN.read_text(encoding="utf-8")
+
+
+# --- D13: FC 08 and FC 43 are address-less --------------------------------------
+
+
+def addressless_records() -> list:
+    """Ten FC 08 and two FC 43 records: enough FC 08 requests that a poll group
+    would arm if address-less FCs were grouped, plus an FC 03 read."""
+    r = [rec(T0 + i, fc=8, subfunction=0x0000) for i in range(10)]
+    r += [rec(T0 + 20 + i, fc=43, subfunction=0x0E) for i in range(2)]
+    r.append(rec(T0 + 30, fc=3, start=100, qty=10))
+    return r
+
+
+def test_fc08_fc43_in_fc_set_not_in_address_sets_or_poll_groups() -> None:
+    (d,) = build_baseline(addressless_records(), FAR_UNTIL).devices
+    assert d.function_codes == (3, 8, 43)
+    assert d.tables[HOLDING].read.ranges == ((100, 109),)  # only the FC 03 read
+    assert all(d.tables[t].write.ranges == () for t in TABLES)
+    assert all(d.tables[t].read.ranges == () for t in TABLES if t != HOLDING)
+    assert [g.function_code for g in d.poll_groups] == [3]  # FC 08/43 never grouped
+
+
+def test_validate_record_accepts_08_43_rejects_others() -> None:
+    validate_record(rec(T0, fc=8, subfunction=0x0004))
+    validate_record(rec(T0, fc=43, subfunction=0x0E))
+    for fc in (7, 17, 0x2A):
+        with pytest.raises(ValueError, match=f"unsupported function code {fc:02d}"):
+            validate_record(rec(T0, fc=fc))
+
+
+def test_render_names_fc08_fc43() -> None:
+    out = render_text(build_baseline(addressless_records(), FAR_UNTIL))
+    assert "function codes: 03 read holding registers, 08 diagnostics, 43 read device identification" in out
+
+
+def test_round_trip_with_fc08_fc43_schema_unchanged() -> None:
+    b = build_baseline(addressless_records(), FAR_UNTIL)
+    data = to_dict(b)
+    assert SCHEMA_VERSION == 1 and data["schema_version"] == 1
+    assert data["devices"][0]["function_codes"] == [3, 8, 43]
+    assert from_dict(json.loads(json.dumps(data, sort_keys=True))) == b
