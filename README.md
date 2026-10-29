@@ -101,8 +101,9 @@ that doesn't exist.
 
 ## Dependency surface
 
-One runtime dependency: **scapy**, used solely for pcap I/O. MBAP/PDU parsing is
-hand-rolled against the Modbus specification and tested against a synthetic,
+One runtime dependency: **scapy**, used solely for pcap I/O and ordered TCP
+payload delivery. MBAP/PDU parsing is hand-rolled against the Modbus
+specification and tested against a synthetic,
 deterministic malformed-input corpus, committed as ground truth and run in CI
 (built from literal bytes, no captured traffic). Small audit surface is the point.
 

@@ -17,7 +17,7 @@ tracked forward, not retroactive reopenings.
 | 1. Ingestion | pcap to per-transaction records; direction attribution (D10), pairing (D11), malformed-input corpus (D4) | known-good pcaps parse; pipelined/split-ADU handled; malformed corpus is deterministic, fails closed, never crashes | Complete | `7ebc595` |
 | 2. Baseline construction | per-device baseline from a user-designated normal period (D6) | baseline object serializable, inspectable, readable by a human without reading code | Complete | `cd1672b` |
 | 3. Anomaly detection | the five heuristics (D7/D8) over the post-baseline period | injected anomaly flagged; clean pcap yields zero false positives; both in CI | First cut met (classes 1, 2, 5); classes 3 and 4 pending | `f81c3bd` |
-| 4. Reporting | human-readable + `--json`; terminal-escape sanitization of packet-derived bytes | "what happened" separated from "why flagged"; sanitization test present | Minimum met; not built: FC 08/43 device attribution, classes 3 and 4 | `c021463` |
+| 4. Reporting | human-readable + `--json`; terminal-escape sanitization of packet-derived bytes | "what happened" separated from "why flagged"; sanitization test present | Minimum met; not built: classes 3 and 4 | `c021463` |
 | 5. CI and tests | pinned lockfile; CI on every push; prose + golden gates; coverage floor | `make check` green (prose gate, golden freshness, ruff, tests at the 97.9% coverage floor) on every push | Met | `c021463` |
 
 Gate 5 note: CI ran `make check` (prose gate, golden freshness, ruff, tests at
@@ -35,30 +35,50 @@ tests that ran green in CI. Gate 3 is not Complete: class
 the arming details are decided (D12). The Gate 4 minimum landed at `c021463`:
 text report and `--json`, what happened separate from why flagged, and every
 text line escaped to printable ASCII, with sanitisation tests. Not built yet:
-device attribution for FC 08 and FC 43, and classes 3 and 4.
+classes 3 and 4.
+
+D13 update (2026-10-29): FC 08 (diagnostics) and FC 43 with MEI type 0x0E (read
+device identification) are attributed to a device as address-less transactions,
+so class 5 fires on them for a known device; they never enter the address sets
+or the poll groups, and classes 1 and 2 never fire on them. Commits: `87c239f`
+(decision record), `b16d477` (parser), `99a3639` (corpus), `2701f9a` (detection
+and report). CI run 40821511536 on `2701f9a` was green: security, and tests on
+Python 3.10, 3.11 and 3.12. Not caught: FC 08 sub-function 0x0004 (force listen
+only) gets no response by specification, so it stays a counted orphan request
+and is not attributed. The report states this limit as fixed text, not a count.
 
 ## Coverage
 
 `make check` enforces `--cov-fail-under=97.9` via `addopts`, so the floor applies
 to every pytest invocation. `[tool.coverage.run].omit` excludes only `tests/*`:
 since `c021463`, `modbus_sentinel/cli.py` is measured, with its `__main__` guard
-marked `# pragma: no cover`. A local run on Python 3.12 measured 99.25% total,
-with `cli.py` and `report.py` at 100%. The total CI measures on Python 3.10 to
-3.12 is not recorded here.
+marked `# pragma: no cover`. A local run on Python 3.12 measured 290 tests and
+99.31% total. Its only missed statements were mbap.py:288, 315, 376 and
+ingest.py:238-249, 375, so `cli.py` and `report.py` are at 100%. CI run
+40821511536 on `2701f9a` measured, on each of Python 3.10, 3.11 and 3.12, 866
+statements, 6 missed, 99.31% total, and reported the 97.9% floor reached.
 
 The floor is 97.9, not 98, on purpose: it was set when coverage was 287/293 =
 97.95% of the parser and ingest layer (Gate 1), which the coverage table
 *displays* as 98% while `--cov-fail-under` compares the unrounded value. The six
 statements uncovered then were error branches (mbap.py:186, 213, 269 and
-ingest.py:237-248, 373); whether they are still uncovered has not been re-read.
+ingest.py:237-248, 373 at that time). The current missed statements are listed
+above.
 
 ## Gate 1 corpus
 
-The malformed-input corpus is **19 fixtures = 18 reject/partial + 1 accept**
+The malformed-input corpus is **22 fixtures = 21 reject/partial + 1 accept**
 (`pipelined_valid_3` is the sole accept case, the positive control that proves
 the gate can fail). Fixtures 18 to 19 landed in `7ebc595` (the round-6
 exception-FC guard); the "18" in DECISIONS.md D4's growth log is a round-5
-snapshot, corrected there with a dated note.
+snapshot, corrected there with a dated note. Fixtures 20 to 22
+(`fc08_short_data`, `fc43_other_mei`, `fc43_object_overrun`) landed in
+`99a3639` (D13).
+
+`fc43_object_overrun` is response-side. Its golden signature pins kind and
+offset only, and those are identical in both directions, so the golden cannot
+tell which parser ran. `test_response_fixtures_use_response_parser` in
+`tests/test_corpus.py` enforces the direction.
 
 The corpus is **synthetic and deterministic**: every fixture is built from
 literal bytes by `tests/corpus/generate_corpus.py`, contains no captured
@@ -85,7 +105,12 @@ in the repo: all packet data is synthetic and built from code.
 Tracked here so they cannot drift out of view. Severity and priority are the
 owner's call; this file only records existence.
 
-- Independent security review of the D12 locked-text amendments (DESIGN.md:3-5) is pending.
+- Independent security review of the D12 and D13 locked-text amendments (DESIGN.md:3-5) is pending.
+- Orphan details carry tid and unit only, no function code, so the report cannot
+  count unanswered FC 08 0x0004 requests (D13 Revisit).
+- DESIGN.md:114 says known-good sample pcaps (pymodbus test captures); none
+  exist, Gate 1 is met by synthetic pcaps (see Gate 1 corpus note). DESIGN.md:3
+  marks the document LOCKED; not edited here.
 
 **Against Gate 1 (scope note, not an untested gap):**
 

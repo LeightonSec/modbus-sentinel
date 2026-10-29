@@ -60,8 +60,9 @@ timeout = 30
 # Floor is 97.9: --cov-fail-under compares the unrounded total, and 97.9 was set
 # when Gate 1 measured 287/293 = 97.95% (displayed as 98%). omit excludes only
 # tests/*, so cli.py and report.py count; cli.py's __main__ guard is marked
-# pragma: no cover. A local Python 3.12 run measured 99.25% total. The total CI
-# measures on Python 3.10 to 3.12 is not recorded here. See GATES.md Coverage.
+# pragma: no cover. A local Python 3.12 run measured 99.31% total. CI run
+# 40821511536 on 2701f9a measured 99.31% (866 statements, 6 missed) on each of
+# Python 3.10, 3.11 and 3.12. See GATES.md Coverage.
 addopts = "--tb=short -q --cov=modbus_sentinel --cov-report=term-missing --cov-report=xml --cov-fail-under=97.9"
 
 [tool.coverage.run]

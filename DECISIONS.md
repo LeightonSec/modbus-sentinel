@@ -457,6 +457,21 @@ poll groups (no address or quantity to key on, and class 3 does not run yet).
 **Revisit:** attributing unanswered FC 08 0x0004 requests; storing FC 43 object
 values if a later class needs them; other MEI types if real captures show them.
 
+**Implementation notes (2026-10-29, after 2701f9a):**
+
+- FC 43 anomaly snippets are capped at the 7-byte response header, so object
+  bytes are never returned inside anomalies.
+- `fc43_object_overrun` is a response-side corpus fixture. The golden pins kind
+  and offset only, which are identical in both directions; direction is
+  enforced by `test_response_fixtures_use_response_parser` and by the detail
+  test in `test_mbap.py`.
+- The JSON `what` object gains `subfunction` for every finding (null for FC 01
+  to 16). The change is additive and the report `schema_version` stays 1.
+  `table`, `start_address` and `end_address` are null for FC 08 and FC 43.
+- Orphan details carry no function code, so the FC 08 0x0004 limit is fixed
+  report text, not a count (see Revisit).
+- Review status unchanged: PENDING.
+
 ---
 
 ## Standing assumption (not a decision, a boundary)
