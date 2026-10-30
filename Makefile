@@ -27,5 +27,5 @@ pin-dev:
 check:
 	$(PY) scripts/verify_prose.py
 	$(PY) -m scripts.emit_golden --check
-	$(PY) -m ruff check modbus_sentinel/ tests/
+	$(PY) -m ruff check modbus_sentinel/ tests/ scripts/
 	$(PY) -m pytest -q

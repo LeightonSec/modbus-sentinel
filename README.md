@@ -55,6 +55,80 @@ Exit codes: `0` no findings, `1` at least one finding, `2` usage or input error
 (a bad `--baseline-until`, an unreadable pcap, or no transactions before
 `--baseline-until`).
 
+## Try it
+
+From a clone, with Python 3.10 or later, run from the repository root:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install --require-hashes -r requirements.txt
+pip install --no-deps -e .
+python -m scripts.make_demo_pcap demo.pcap
+modbus-sentinel demo.pcap --baseline-until 2026-07-06T08:02:00Z
+```
+
+`--require-hashes` checks scapy, the only runtime dependency, against the hashes in `requirements.txt`. The editable install still downloads its build tools (setuptools and wheel) without hash checks.
+
+The demo capture starts at 2026-07-06T08:00:00Z, so the cutoff sits two minutes
+in; the Usage example's cutoff would leave this capture no baseline.
+
+```text
+For authorised use only. Analyse only captures you own or have explicit
+written permission to analyse.
+
+modbus-sentinel report
+  pcap: demo.pcap
+  clock: capture clock, UTC (not device clock). Addresses are 0-based wire addresses.
+  baseline period: transactions requested before 2026-07-06T08:02:00Z; assumed clean, so anything in it is learned as normal.
+  wording: findings are anomalous, not attack; each class is a heuristic, not proof of malice.
+
+ingest
+  packets: 119 (0 non-TCP), paired transactions: 58
+  retransmissions deduplicated: 0 segments, 0 bytes
+  parse and pairing anomalies: none
+
+baseline
+  28 transactions in the baseline period, 1 device (full baseline in --json)
+  device 192.0.2.20 unit 1: 28 transactions, 0 exception responses, function codes 03, 06
+
+detection
+  classes run: 1 unscheduled write, 2 write to unknown register, 5 never-seen function code
+  transactions analysed: 30
+  findings: 2
+
+  finding 1 of 2
+    what happened: 2026-07-06T08:02:30.300Z 192.0.2.20 unit 1 FC 06 write single register, holding registers 105, value 500
+    why flagged:   class 1 unscheduled write: anomalous: holding registers 105 only ever read in the baseline, never written
+
+  finding 2 of 2
+    what happened: 2026-07-06T08:02:50.300Z 192.0.2.20 unit 1 FC 08 diagnostics, sub-function 0x0001
+    why flagged:   class 5 never-seen function code: anomalous: function code 08 (diagnostics) was never used successfully with this device in the baseline
+
+coverage gaps
+  classes not implemented: 3 (polling-interval break), 4 (off-hours activity)
+  unanswered or superseded requests are not analysed: 0 orphan requests counted
+  function codes outside the supported set are counted, not attributed to a device: 0
+  streams not parsed (direction unknown or conflicting): 0
+  FC 08 sub-function 0x0004 (force listen only) gets no response by specification, so an unanswered one is counted as an orphan request and is not attributed to a device; class 5 cannot see it
+```
+
+The exit code is 1 because there are findings; see Usage for the exit codes.
+
+What you are looking at:
+
+- One capture, split at the cutoff: the first two minutes are the baseline, the
+  last two are checked against it. The baseline is rebuilt on every run.
+- The baseline period is assumed clean, as in real use.
+- The data is synthetic and regular: one client reads holding registers 100-109
+  every 5 s and writes register 40 every 30 s, with two planted events after the
+  cutoff. `scripts/make_demo_pcap.py` writes it at run time.
+- The FC 6 write to register 105, which was only ever read, is class 1. The FC 08
+  request, a function code this device never used, is class 5. A hit on a
+  planted event shows the logic works; it is not a detection rate.
+- Classes 3 and 4 are not implemented. An FC 08 sub-function 0x0004 request
+  gets no response and is the documented miss.
+
 ## The five anomaly classes
 
 Classes 1, 2 and 5 run today; classes 3 and 4 are not yet implemented, and the
