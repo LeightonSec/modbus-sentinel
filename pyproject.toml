@@ -61,7 +61,7 @@ timeout = 30
 # when Gate 1 measured 287/293 = 97.95% (displayed as 98%). omit excludes only
 # tests/*, so cli.py and report.py count; cli.py's __main__ guard is marked
 # pragma: no cover. A local Python 3.12 run measured 100% total. CI run
-# 40926915543 on 61ada8a measured 100% (866 statements, 0 missed) on each of
+# 41011532374 on 203e634 measured 100% (866 statements, 0 missed) on each of
 # Python 3.10, 3.11 and 3.12. See GATES.md Coverage.
 addopts = "--tb=short -q --cov=modbus_sentinel --cov-report=term-missing --cov-report=xml --cov-fail-under=97.9"
 

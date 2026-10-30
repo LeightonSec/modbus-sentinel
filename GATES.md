@@ -54,12 +54,13 @@ to every pytest invocation. `[tool.coverage.run].omit` excludes only `tests/*`:
 since `c021463`, `modbus_sentinel/cli.py` is measured, with its `__main__` guard
 marked `# pragma: no cover`. The figures are statement coverage; branch
 coverage is not measured (no `branch` setting in `[tool.coverage]`, no
-`--cov-branch` in `addopts`). A local run on Python 3.12 measured 328 tests and
-866 statements, 0 missed, 100% total. CI run 40926915543 on `61ada8a` measured,
+`--cov-branch` in `addopts`). A local run on Python 3.12 measured 330 tests and
+866 statements, 0 missed, 100% total. CI run 41011532374 on `203e634` measured,
 on each of Python 3.10, 3.11 and 3.12, 866 statements, 0 missed, 100% total,
-and reported the 97.9% floor reached. Before that, at `2701f9a` (CI run
-40821511536), CI measured 866 statements, 6 missed, 99.31%; the missed
-statements were mbap.py:288, 315, 376 and ingest.py:238-249, 375.
+and reported the 97.9% floor reached. CI run 40926915543 on `61ada8a` was the
+first with 0 missed. Before that, at `2701f9a` (CI run 40821511536), CI
+measured 866 statements, 6 missed, 99.31%; the missed statements were
+mbap.py:288, 315, 376 and ingest.py:238-249, 375.
 
 The floor is 97.9, not 98, on purpose: it was set when coverage was 287/293 =
 97.95% of the parser and ingest layer (Gate 1), which the coverage table
@@ -76,7 +77,10 @@ for it. A read of `tests/test_mbap.py` found no test with a quantity at the spec
 maximum, so boundary tests were added for read requests and for FC 15/16
 requests and responses. The anchored equivalent M10 is now killed. M7 itself was
 not re-run on the new suite. Quantity limits are pinned in those tests as spec
-literals (2000, 125, 1968, 123), not imported from the parser.
+literals (2000, 125, 1968, 123), not imported from the parser. M14 and M15,
+which check the test that pins the README Try it output block to the tool's real
+output (`tests/test_demo.py`), are also killed, each against the test selected
+for it.
 
 ## Gate 1 corpus
 
@@ -124,6 +128,9 @@ owner's call; this file only records existence.
 - DESIGN.md:114 says known-good sample pcaps (pymodbus test captures); none
   exist, Gate 1 is met by synthetic pcaps (see Gate 1 corpus note). DESIGN.md:3
   marks the document LOCKED; not edited here.
+- The commit-3 ruling labels were renamed to R1 to R4 in detect.py's docstrings
+  (`203e634`); four comments in `tests/test_detect.py` (lines 189, 198, 216,
+  240) and report.py:12 still use D1 to D4 for those rulings.
 
 **Against Gate 1 (scope note, not an untested gap):**
 
