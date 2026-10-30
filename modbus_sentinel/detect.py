@@ -6,18 +6,19 @@ and that finding lists every class it matched; classes 1 and 2 are never both
 (D7, D12). What happened (facts from the record) is kept separate from why it
 was flagged (one Reason per class), per DESIGN.md Gate 4.
 
-Rulings this module implements (commit 3 plan, approved):
+Rulings this module implements, labelled R1 to R4: they come from the approved
+commit 3 plan and are not the DECISIONS.md entries D1 to D4.
 - Writes are judged per address against the target table's sets only (D12):
   written in baseline = normal, read but never written = class 1, never read or
   written = class 2. A multi-address write with any never-seen address is class
   2, otherwise class 1 if any address was only read; the reason names both
-  kinds of address, so no fact is dropped (D1).
+  kinds of address, so no fact is dropped (R1).
 - A device absent from the baseline is not run through the classes; it is
-  reported as an UnbaselinedDevice coverage gap instead (D2).
+  reported as an UnbaselinedDevice coverage gap instead (R2).
 - An exception-answered transaction is judged like any other: the attempt is
-  the behaviour, and the finding records the exception code (D3).
+  the behaviour, and the finding records the exception code (R3).
 - A malformed record (unsupported FC, address past 65535) or one from before
-  the baseline end raises ValueError (D4). Whether a hostile packet should stop
+  the baseline end raises ValueError (R4). Whether a hostile packet should stop
   the run this way is a CLI / Gate 4 decision.
 Classes 3 and 4 are not implemented (D12) and are named as such in the result.
 Every value here is an integer or a string built from integers: no raw packet
@@ -87,7 +88,7 @@ class Finding:
 
 @dataclass(frozen=True)
 class UnbaselinedDevice:
-    """A device seen only after the baseline: not analysed, reported (D2)."""
+    """A device seen only after the baseline: not analysed, reported (R2)."""
 
     server_ip: str
     unit_id: int
